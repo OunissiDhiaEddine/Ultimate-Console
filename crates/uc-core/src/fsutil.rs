@@ -3,6 +3,7 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{Error, Result};
 
@@ -22,7 +23,10 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         .file_name()
         .map(|n| n.to_string_lossy())
         .unwrap_or_default();
-    let tmp = dir.join(format!(".{file_name}.{}.tmp", std::process::id()));
+    // pid + counter: unique across processes and across threads of this one.
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(".{file_name}.{}.{n}.tmp", std::process::id()));
 
     let result = (|| {
         let mut f = fs::File::create(&tmp)?;

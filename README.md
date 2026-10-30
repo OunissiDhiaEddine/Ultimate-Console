@@ -43,8 +43,9 @@ with no taskbar or a black screen. In order of preference:
    *Run new task* → type `explorer` → OK. That brings the taskbar back.
 5. **Displays still wrong?** Press `Win+P` and pick *Extend* or *PC screen
    only*, or in Task Manager run `displayswitch /extend`.
-6. **Last resort.** `Ctrl+Alt+Del` → sign out, or restart the PC. Nothing the
-   app changes survives a sign-out.
+6. **Last resort.** `Ctrl+Alt+Del` → sign out, or restart the PC. Explorer
+   always comes back on the next sign-in. Windows may remember the TV-only
+   display layout, so use step 5 if the monitors stay off.
 
 If the agent keeps putting you back into a bad state, delete
 `%LOCALAPPDATA%\UltimateConsole\state.json` (Task Manager → Run →

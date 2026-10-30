@@ -355,6 +355,9 @@ impl Config {
         if self.tv.adb_port == 0 {
             problems.push("tv.adb_port must be > 0".into());
         }
+        if self.tv.wol_port == 0 {
+            problems.push("tv.wol_port must be > 0".into());
+        }
         for (name, v) in [
             ("display.wait_timeout_secs", self.display.wait_timeout_secs),
             ("tv.connect_timeout_ms", self.tv.connect_timeout_ms),
