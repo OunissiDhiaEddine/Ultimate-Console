@@ -722,7 +722,8 @@ dependencies = [
 name = "uc-sysinfo"
 version = "0.1.0"
 dependencies = [
- "uc-core",
+ "tracing",
+ "windows",
 ]
 
 [[package]]
