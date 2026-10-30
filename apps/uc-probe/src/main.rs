@@ -7,12 +7,16 @@
 //! Set `UC_HOME` to point every file at a scratch folder instead of the real
 //! `%APPDATA%`/`%LOCALAPPDATA%` ones.
 
+mod power;
+
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use uc_audio::{AudioControl, CoreAudio, level_to_percent, percent_to_level};
 use uc_core::{Config, Hotkey, Paths, RuntimeState};
 use uc_sysinfo::{Sampler, StatsSource, format_bytes, format_uptime};
+
+mod shell;
 
 #[derive(Parser)]
 #[command(
@@ -40,6 +44,9 @@ enum Command {
     /// Audio devices and volume (WP-04).
     #[command(subcommand)]
     Audio(AudioCmd),
+    /// Explorer exit/start and Steam Big Picture (WP-03).
+    #[command(subcommand)]
+    Shell(shell::ShellCmd),
     /// Sample CPU/RAM/GPU for the system and the given PIDs, like the overlay does.
     Sysinfo {
         /// Process IDs to watch (see Task Manager's Details tab). None = system only.
@@ -51,6 +58,9 @@ enum Command {
         #[arg(long, default_value_t = 1000)]
         interval: u64,
     },
+    /// Suspend/resume, display-state and network-ready checks (WP-05).
+    #[command(subcommand)]
+    Power(power::PowerCmd),
 }
 
 #[derive(Subcommand)]
@@ -115,6 +125,7 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     match cli.command {
+        Command::Power(cmd) => return power::run(cmd),
         Command::Paths => {
             let p = Paths::from_env()?;
             println!("config: {}", p.config_file().display());
@@ -170,6 +181,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
         Command::Audio(cmd) => audio(cmd)?,
+        Command::Shell(cmd) => shell::run(cmd)?,
         Command::Sysinfo {
             pids,
             count,
