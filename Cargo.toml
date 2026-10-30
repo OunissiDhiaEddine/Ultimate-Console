@@ -30,6 +30,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
 clap = { version = "4.6", features = ["derive"] }
 tempfile = "3"
+# uc-tv: ADB RSA auth (key gen, PKCS#1 v1.5 SHA-1 signing, PEM key file) and sockets.
+rsa = { version = "0.9", features = ["getrandom"] }
+sha1 = { version = "0.10", features = ["oid"] }
+socket2 = "0.6"
 # Win32 bindings for the platform crates. Add only the features you need in
 # the crate's own Cargo.toml: `windows = { workspace = true, features = [...] }`.
 windows = "0.62"
@@ -39,6 +43,11 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# RSA key generation is very slow without optimisation; keep tests and debug
+# builds of uc-tv quick.
+[profile.dev.package.num-bigint-dig]
+opt-level = 3
 
 [profile.release]
 opt-level = "s"
