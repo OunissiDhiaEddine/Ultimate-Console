@@ -33,6 +33,12 @@ tempfile = "3"
 # Win32 bindings for the platform crates. Add only the features you need in
 # the crate's own Cargo.toml: `windows = { workspace = true, features = [...] }`.
 windows = "0.62"
+# Settings app UI (WP-09). 0.33 is the newest eframe that builds on the
+# workspace MSRV (1.88). glow instead of wgpu keeps the exe small.
+eframe = { version = "0.33", default-features = false, features = [
+    "default_fonts",
+    "glow",
+] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
