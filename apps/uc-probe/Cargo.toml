@@ -1,0 +1,23 @@
+[package]
+name = "uc-probe"
+description = "CLI to exercise each Ultimate Console crate on real hardware."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+uc-core.workspace = true
+uc-display.workspace = true
+uc-tv.workspace = true
+uc-shell.workspace = true
+uc-power.workspace = true
+uc-audio.workspace = true
+uc-sysinfo.workspace = true
+uc-overlay.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

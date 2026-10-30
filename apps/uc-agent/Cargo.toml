@@ -1,0 +1,22 @@
+[package]
+name = "uc-agent"
+description = "Ultimate Console background agent: hotkeys, orchestrator, overlay host, IPC server (WP-08)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+uc-core.workspace = true
+uc-display.workspace = true
+uc-tv.workspace = true
+uc-shell.workspace = true
+uc-power.workspace = true
+uc-audio.workspace = true
+uc-sysinfo.workspace = true
+uc-overlay.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
