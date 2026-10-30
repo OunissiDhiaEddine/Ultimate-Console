@@ -9,7 +9,8 @@
 
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+use uc_audio::{AudioControl, CoreAudio, level_to_percent, percent_to_level};
 use uc_core::{Config, Hotkey, Paths, RuntimeState};
 
 #[derive(Parser)]
@@ -35,6 +36,9 @@ enum Command {
     State(StateCmd),
     /// Check a shortcut against the built-in conflict rules, e.g. `hotkey "Ctrl+Alt+G"`.
     Hotkey { combo: String },
+    /// Audio devices and volume (WP-04).
+    #[command(subcommand)]
+    Audio(AudioCmd),
 }
 
 #[derive(Subcommand)]
@@ -53,6 +57,38 @@ enum StateCmd {
     Show,
     /// Delete state.json (back to desktop mode). Does not restore anything.
     Clear,
+}
+
+#[derive(Subcommand)]
+enum AudioCmd {
+    /// List active output devices; `*` marks the default.
+    List,
+    /// Make a device the default output (all roles). Takes an id from `list`.
+    SetDefault { id: String },
+    /// Show the master volume, or set it to PERCENT (0-100).
+    Volume {
+        #[arg(value_parser = clap::value_parser!(u8).range(0..=100))]
+        percent: Option<u8>,
+    },
+    /// Show the master mute, or change it.
+    Mute { action: Option<Switch> },
+    /// List apps with an audio session on the default output.
+    Apps,
+    /// Set the volume (0-100) of every session of process PID.
+    AppVolume {
+        pid: u32,
+        #[arg(value_parser = clap::value_parser!(u8).range(0..=100))]
+        percent: u8,
+    },
+    /// Mute or unmute process PID.
+    AppMute { pid: u32, action: Switch },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Switch {
+    On,
+    Off,
+    Toggle,
 }
 
 fn main() -> ExitCode {
@@ -121,6 +157,80 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::FAILURE);
             }
         }
+        Command::Audio(cmd) => audio(cmd)?,
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn audio(cmd: AudioCmd) -> Result<(), Box<dyn std::error::Error>> {
+    let audio = CoreAudio::new()?;
+    let on_off = |m: bool| if m { "on" } else { "off" };
+    match cmd {
+        AudioCmd::List => {
+            for d in audio.outputs()? {
+                let mark = if d.is_default { '*' } else { ' ' };
+                println!("{mark} {}\n    {}", d.name, d.id);
+            }
+        }
+        AudioCmd::SetDefault { id } => {
+            audio.set_default_output(&id)?;
+            if let Some(d) = audio.default_output()? {
+                println!("default output: {} ({})", d.name, d.id);
+            }
+        }
+        AudioCmd::Volume { percent } => {
+            if let Some(p) = percent {
+                audio.set_volume(percent_to_level(p))?;
+            }
+            println!(
+                "volume {}%  mute {}",
+                level_to_percent(audio.volume()?),
+                on_off(audio.muted()?)
+            );
+        }
+        AudioCmd::Mute { action } => {
+            let muted = match action {
+                None => audio.muted()?,
+                Some(Switch::On) => set_mute(&audio, true)?,
+                Some(Switch::Off) => set_mute(&audio, false)?,
+                Some(Switch::Toggle) => audio.toggle_mute()?,
+            };
+            println!("mute {}", on_off(muted));
+        }
+        AudioCmd::Apps => {
+            for s in audio.sessions()? {
+                println!(
+                    "{:>7}  {:>3}%  mute {:<3}  {}",
+                    s.pid,
+                    level_to_percent(s.volume),
+                    on_off(s.muted),
+                    s.name
+                );
+            }
+        }
+        AudioCmd::AppVolume { pid, percent } => {
+            audio.set_app_volume(pid, percent_to_level(percent))?;
+            println!("process {pid}: volume {percent}%");
+        }
+        AudioCmd::AppMute { pid, action } => {
+            let muted = match action {
+                Switch::On => true,
+                Switch::Off => false,
+                Switch::Toggle => {
+                    !audio
+                        .app_session(pid)?
+                        .ok_or(uc_audio::Error::NoSession(pid))?
+                        .muted
+                }
+            };
+            audio.set_app_muted(pid, muted)?;
+            println!("process {pid}: mute {}", on_off(muted));
+        }
+    }
+    Ok(())
+}
+
+fn set_mute(audio: &CoreAudio, muted: bool) -> uc_audio::Result<bool> {
+    audio.set_muted(muted)?;
+    Ok(muted)
 }
