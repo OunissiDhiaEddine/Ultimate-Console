@@ -11,6 +11,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use uc_core::{Config, Hotkey, Paths, RuntimeState};
+use uc_sysinfo::{Sampler, StatsSource, format_bytes, format_uptime};
 
 #[derive(Parser)]
 #[command(
@@ -35,6 +36,17 @@ enum Command {
     State(StateCmd),
     /// Check a shortcut against the built-in conflict rules, e.g. `hotkey "Ctrl+Alt+G"`.
     Hotkey { combo: String },
+    /// Sample CPU/RAM/GPU for the system and the given PIDs, like the overlay does.
+    Sysinfo {
+        /// Process IDs to watch (see Task Manager's Details tab). None = system only.
+        pids: Vec<u32>,
+        /// Number of samples to print.
+        #[arg(long, default_value_t = 5)]
+        count: u32,
+        /// Milliseconds between samples.
+        #[arg(long, default_value_t = 1000)]
+        interval: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -121,6 +133,47 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::FAILURE);
             }
         }
+        Command::Sysinfo {
+            pids,
+            count,
+            interval,
+        } => sysinfo(&pids, count, interval),
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn sysinfo(pids: &[u32], count: u32, interval_ms: u64) {
+    let pct = |p: Option<f32>| p.map_or_else(|| "  -- ".to_owned(), |v| format!("{v:4.1}%"));
+    let mut sampler = Sampler::new();
+    for i in 0..count {
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+        }
+        let started = std::time::Instant::now();
+        let snap = sampler.sample(pids);
+        let took = started.elapsed();
+        let s = &snap.system;
+        println!(
+            "[{i}] system  cpu {}  gpu {}  ram {} / {}  (sample took {} ms)",
+            pct(s.cpu_percent),
+            pct(s.gpu_percent),
+            format_bytes(s.memory_used_bytes),
+            format_bytes(s.memory_total_bytes),
+            took.as_millis()
+        );
+        for &pid in pids {
+            match snap.process(pid) {
+                Some(p) => println!(
+                    "    {pid:>6} {:<24} cpu {}  gpu {}  ws {}  private {}  up {}",
+                    p.name.as_deref().unwrap_or("?"),
+                    pct(p.cpu_percent),
+                    pct(p.gpu_percent),
+                    format_bytes(p.working_set_bytes),
+                    format_bytes(p.private_bytes),
+                    format_uptime(p.uptime)
+                ),
+                None => println!("    {pid:>6} not readable (exited or access denied)"),
+            }
+        }
+    }
 }
