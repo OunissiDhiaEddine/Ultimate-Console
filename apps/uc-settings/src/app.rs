@@ -656,6 +656,10 @@ impl eframe::App for App {
         for msg in self.client.poll() {
             self.handle(msg);
         }
+        // Leaving the page stops recording, so keys typed elsewhere aren't eaten.
+        if self.page != Page::Hotkeys {
+            self.recording = None;
+        }
         self.record_hotkey(ctx);
         // "Saved." etc. is stale once the user edits again.
         if self.dirty() && matches!(self.notice, Some((false, _))) {
