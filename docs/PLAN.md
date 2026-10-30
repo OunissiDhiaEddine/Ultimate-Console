@@ -160,10 +160,13 @@ small subset of the ADB protocol we need (CNXN/AUTH/OPEN/WRTE, `shell:`).
     poll, ≤10 s) → WoL + ADB wake with retries → re-assert the gaming display
     topology (Windows sometimes re-enables monitors on resume) → refocus Big
     Picture.
-- **Modern Standby (S0ix) laptops/boards**: additionally register
-  `GUID_CONSOLE_DISPLAY_STATE` via `RegisterPowerSettingNotification` and
-  treat "display off for N s while on battery-less standby" equivalently.
-  WP-05 decides from testing which signal is reliable on Dhia's machine.
+- **Dhia's PC uses classic S3 sleep** (`powercfg /a`: S3 only, no Modern
+  Standby, no hibernate). So `PBT_APMSUSPEND` / `PBT_APMRESUMEAUTOMATIC` are
+  the only signals needed. In S3 the NIC goes down right after suspend, which
+  is why the TV sleep command must go out on the already-open ADB socket
+  inside the suspend handler. On resume the NIC needs a few seconds to get a
+  link and IP, hence the network-ready wait before WoL/ADB. Modern Standby
+  support is out of scope (WP-11).
 - Steam's own power menu "Sleep" just calls system suspend, so it goes through
   the same path. "Restart"/"Shut down" are ignored (R9 out of scope).
 - Because the check is on the agent's own state machine, manual Big Picture
@@ -186,7 +189,7 @@ small subset of the ADB protocol we need (CNXN/AUTH/OPEN/WRTE, `shell:`).
   rendered with **Direct2D + DirectWrite on a DirectComposition swapchain**
   (per-pixel alpha, GPU-composited, no frames rendered while hidden →
   zero idle cost).
-- Toggle hotkey (default `Ctrl+Alt+O`, configurable). For the controller:
+- Toggle hotkey (default `Ctrl+Alt+O`, changeable in the settings app, see §2.13). For the controller:
   recommend mapping a Steam Input chord (e.g. Guide+Y) to that keyboard
   shortcut. While visible, the overlay polls **XInput** (and keyboard) for
   navigation; it stops polling when hidden.
@@ -220,8 +223,10 @@ small subset of the ADB protocol we need (CNXN/AUTH/OPEN/WRTE, `shell:`).
   (JSON lines, request/response + event stream). If the agent isn't running,
   the app can start it.
 - Pages:
-  - **General**: start with Windows, gaming-mode hotkey, panic hotkey, overlay
-    hotkey, overlay-in-desktop toggle.
+  - **General**: start with Windows, overlay-in-desktop toggle.
+  - **Hotkeys**: gaming-mode, overlay and panic hotkeys, each with a
+    "press the new shortcut" recorder, conflict check (§2.13) and
+    "reset to default".
   - **Display**: list displays (from agent), "Identify" (agent flashes the
     number on each screen), pick TV, resolution/refresh/HDR, wait timeout.
   - **Audio**: switch default device on/off, pick device.
@@ -248,21 +253,62 @@ small subset of the ADB protocol we need (CNXN/AUTH/OPEN/WRTE, `shell:`).
   `%LOCALAPPDATA%\UltimateConsole`, no admin, Start-menu shortcut, delta
   updates, clean uninstall entry in "Apps & features", and install/uninstall
   hooks the app handles itself.
-- Updates come from **GitHub Releases**. ⚠️ The repo is private, and
-  unauthenticated clients can't read private releases. Options (decision for
-  Dhia, see §7): (a) publish releases to a small **public** "releases-only"
-  repo, (b) make this repo public, (c) embed a read-only fine-grained token
-  (not recommended).
+- Updates come from **GitHub Releases of this private repo** (decided: Dhia is
+  the only user). Private releases need auth, so:
+  - Dhia creates a **fine-grained personal access token** limited to this one
+    repo with *Contents: read-only*, and pastes it once into the settings app
+    (About/Updates page, with a link to the GitHub token page and a "Test"
+    button).
+  - The token is stored encrypted with **DPAPI** (`CryptProtectData`, current
+    user scope) in `%LOCALAPPDATA%\UltimateConsole\update-token.bin`. It is
+    never compiled into the binary or committed.
+  - The updater passes it to Velopack's `GithubSource` (supports an access
+    token for private repos). If missing/expired, update checks are skipped
+    and the settings app shows "update token needed".
+  - The very first install is done by downloading the Setup.exe from the
+    GitHub Releases page by hand.
 - Uninstall hook (`--veloapp-uninstall`) must, in order:
   1. If gaming mode is active → run full restore (display, Explorer, audio).
   2. Stop the agent.
   3. Remove the HKCU Run key, any scheduled task (if the AutoRestartShell
      fallback was used: restore the value to 1 and delete the helper task).
   4. Delete `%APPDATA%\UltimateConsole` and `%LOCALAPPDATA%\UltimateConsole`
-     (config, state, logs, ADB key).
+     (config, state, logs, ADB key, encrypted update token).
   5. Velopack removes binaries, shortcuts and the uninstall entry.
   An `uninstall-manifest` test in CI lists every path/key the app can create,
   and WP-09 verifies each is gone after uninstall.
+
+### 2.13 Hotkeys
+
+Defaults (all changeable in the settings app, stored in `config.toml`):
+
+| Action | Default | Why it's safe |
+|---|---|---|
+| Toggle gaming mode | `Ctrl+Alt+G` | Not used by Windows, Game Bar (Win+Alt+…), NVIDIA (Alt+Z, Alt+F…), AMD (Alt+R, Ctrl+Shift+…) or Steam |
+| Show/hide overlay | `Ctrl+Alt+O` | Same as above |
+| Panic restore | `Ctrl+Alt+Shift+R` | Same as above; deliberately hard to press by accident |
+
+No `Win+…` defaults: Windows reserves many of them and they behave
+differently with and without Explorer running.
+
+Conflict checks, done by the agent (it owns the hotkeys) and shown in the
+settings app when recording a new shortcut:
+1. **Windows-reserved list** built into the app (Win+L, Ctrl+Alt+Del,
+   Ctrl+Shift+Esc, Alt+Tab, Alt+F4, Win+G/Alt+Win+…, Ctrl+Esc, PrintScreen
+   combos, etc.) → rejected.
+2. **Already taken by another app**: the agent tries `RegisterHotKey`; if it
+   fails, the shortcut is reported as "in use by another program" and the old
+   one is kept.
+3. **AltGr clash**: `Ctrl+Alt+<key>` equals AltGr on French/AZERTY and Arabic
+   layouts, so the app checks with `VkKeyScanEx`/`ToUnicodeEx` on every
+   installed keyboard layout whether that combo types a character (like
+   AltGr+E = €). If so it warns, because typing that character would trigger
+   the hotkey. G and O are free on AZERTY/QWERTY/Arabic (101) layouts;
+   WP-08 verifies this with a unit test over those layouts.
+4. Needs at least one modifier, and the three hotkeys must differ.
+
+For the controller: map a Steam Input chord (e.g. Guide+Y) to the overlay
+hotkey; the settings app shows how.
 
 ---
 
@@ -364,6 +410,8 @@ on the real PC. "Interfaces" lists what other packages may rely on.
   keepalive), WoL sender, MAC lookup from ARP, mDNS discovery of `_adb._tcp`.
 - `TvController { wake(), sleep(), state(), run(cmd), pair() }`, all with
   timeouts and retry policy from config.
+- Dhia's TV (IRIS, Android TV) supports WoL: wake = WoL first, then ADB
+  `KEYCODE_WAKEUP` once reachable; verify both on the real TV.
 - Probe: `uc-probe tv discover | pair <ip> | wake | sleep | state`.
 - Depends on: WP-00. Size: M–L (protocol work). Riskiest piece for hardware variance.
 
@@ -388,8 +436,10 @@ on the real PC. "Interfaces" lists what other packages may rely on.
   notifications; network-ready waiter.
 - Exposes events to a callback/channel; does **no** policy itself (the
   gaming-only rule lives in the orchestrator).
-- Probe: `uc-probe power watch` (logs events with timestamps; Dhia sleeps/wakes
-  the PC to verify timing budget and which signals fire, S3 vs Modern Standby).
+- Target is S3 only (Dhia's PC has no Modern Standby). Measure how long the
+  suspend handler can run and how long the NIC takes to come back on resume.
+- Probe: `uc-probe power watch` (logs events with timestamps and network
+  state; Dhia sleeps/wakes the PC to measure both).
 - Depends on: WP-00. Size: S.
 
 ### WP-06 · System info (`uc-sysinfo`)
@@ -409,7 +459,7 @@ on the real PC. "Interfaces" lists what other packages may rely on.
 ### WP-08 · Agent / orchestrator (`uc-agent`)
 - Message-only window, hotkeys, state machine (§3.1) with per-step rollback,
   crash recovery from `state.json`, panic hotkey, `RegisterApplicationRestart`,
-  single-instance mutex, config hot-reload, power policy (gaming-only), IPC
+  single-instance mutex, config hot-reload, hotkey conflict checks (§2.13), power policy (gaming-only), IPC
   server, overlay hosting, autostart registration.
 - Can start against stub implementations and swap in real crates as WP-01…07 merge.
 - Depends on: WP-00; full function needs WP-01…07. Size: L.
@@ -425,8 +475,9 @@ on the real PC. "Interfaces" lists what other packages may rely on.
   (settings only), install hook (register autostart, start agent), update
   check in agent (daily + "check now" via IPC; apply on next exit from
   gaming mode / at idle, never during gaming mode), uninstall hook (§2.12).
-- `release.yml`: on tag `v*` → build, `vpk pack`, upload to the releases
-  target chosen in §7.
+- `release.yml`: on tag `v*` → build, `vpk pack`, upload to this repo's
+  GitHub Releases. Updater auth: DPAPI-encrypted fine-grained token (§2.12),
+  entered in the settings app.
 - Uninstall verification checklist (every file/key from the manifest).
 - Optional: code signing (self-signed is fine for personal use; SmartScreen
   will warn on unsigned).
@@ -437,6 +488,7 @@ on the real PC. "Interfaces" lists what other packages may rely on.
 - Shutdown → TV off (R9).
 - FPS counter in overlay via ETW/PresentMon.
 - HDMI-CEC via USB-CEC adapter.
+- Modern Standby (S0ix) support, for other machines.
 
 ### Dependency graph / suggested order
 
@@ -479,15 +531,18 @@ Wave 3: WP-07, WP-08. Wave 4: WP-10, then real-hardware end-to-end test.
 
 ---
 
-## 7. Open decisions for Dhia
+## 7. Decisions (answered by Dhia, 2026-10-30)
 
-1. **Update hosting** for a private repo: public releases-only repo
-   (recommended) vs make this repo public vs embedded token.
-2. **Default hotkeys**: proposal `Ctrl+Alt+G` (gaming mode toggle),
-   `Ctrl+Alt+O` (overlay), `Ctrl+Alt+Shift+R` (panic restore).
-3. **TV model** (brand/OS version), so WP-02 can check its deep-sleep / WoL behaviour.
-4. **Machine type**: desktop with S3 sleep or Modern Standby? (`powercfg /a`
-   output answers it; affects WP-05.)
+1. **Updates**: Dhia is the only user, so releases stay in this private repo;
+   the updater authenticates with a DPAPI-encrypted fine-grained token (§2.12).
+2. **Hotkeys**: defaults `Ctrl+Alt+G` / `Ctrl+Alt+O` / `Ctrl+Alt+Shift+R`
+   accepted, must not clash with anything Windows uses, and all must be
+   changeable in the settings app (§2.13).
+3. **TV**: IRIS (Algerian brand), Android TV, supports Wake-on-LAN. So WoL is
+   the primary wake path and ADB `KEYCODE_WAKEUP` the follow-up; ADB
+   `KEYCODE_SLEEP` for sleep. WP-02 confirms on the real TV whether "network
+   standby" must be enabled and which Android version it runs.
+4. **Sleep**: S3 only (no Modern Standby, no hibernate). WP-05 targets S3.
 
 ## 8. Risks
 
