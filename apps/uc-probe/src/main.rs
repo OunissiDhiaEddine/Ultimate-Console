@@ -12,6 +12,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use uc_core::{Config, Hotkey, Paths, RuntimeState};
 
+mod shell;
+
 #[derive(Parser)]
 #[command(
     name = "uc-probe",
@@ -35,6 +37,9 @@ enum Command {
     State(StateCmd),
     /// Check a shortcut against the built-in conflict rules, e.g. `hotkey "Ctrl+Alt+G"`.
     Hotkey { combo: String },
+    /// Explorer exit/start and Steam Big Picture (WP-03).
+    #[command(subcommand)]
+    Shell(shell::ShellCmd),
 }
 
 #[derive(Subcommand)]
@@ -121,6 +126,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::FAILURE);
             }
         }
+        Command::Shell(cmd) => shell::run(cmd)?,
     }
     Ok(ExitCode::SUCCESS)
 }
