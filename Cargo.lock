@@ -934,7 +934,10 @@ dependencies = [
 name = "uc-audio"
 version = "0.1.0"
 dependencies = [
+ "thiserror",
+ "tracing",
  "uc-core",
+ "windows",
 ]
 
 [[package]]
