@@ -98,12 +98,14 @@ pub fn decode_pbt(wparam: usize) -> Option<PowerEvent> {
 /// registration, once as a broadcast to top-level windows), and Windows
 /// re-sends an unchanged display state. Rules:
 ///
-/// - suspend/resume: an event equal to the previous one within
-///   [`EventFilter::REPEAT_WINDOW`] is dropped;
+/// - suspend/resume: an event of the same kind as one seen less than
+///   [`EventFilter::REPEAT_WINDOW`] ago is dropped (tracked per kind, since
+///   the two copies of a resume pair can interleave);
 /// - display: a state equal to the last reported display state is dropped.
 #[derive(Debug, Default)]
 pub struct EventFilter {
-    last_power: Option<(PowerEvent, Instant)>,
+    /// Last time each of suspend / resume automatic / resume suspend was seen.
+    last_power: [Option<Instant>; 3],
     last_display: Option<DisplayState>,
 }
 
@@ -123,13 +125,15 @@ impl EventFilter {
                 self.last_display = Some(state);
                 new
             }
-            _ => {
-                let repeat = matches!(
-                    self.last_power,
-                    Some((prev, at)) if prev == event
-                        && now.saturating_duration_since(at) < Self::REPEAT_WINDOW
-                );
-                self.last_power = Some((event, now));
+            PowerEvent::Suspend | PowerEvent::ResumeAutomatic | PowerEvent::ResumeSuspend => {
+                let slot = &mut self.last_power[match event {
+                    PowerEvent::Suspend => 0,
+                    PowerEvent::ResumeAutomatic => 1,
+                    _ => 2,
+                }];
+                let repeat =
+                    slot.is_some_and(|at| now.saturating_duration_since(at) < Self::REPEAT_WINDOW);
+                *slot = Some(now);
                 !repeat
             }
         }
@@ -170,6 +174,17 @@ mod tests {
         // A second sleep later is a real event.
         assert!(f.accept(PowerEvent::Suspend, t0 + Duration::from_secs(60)));
         assert!(f.accept(PowerEvent::Suspend, t0 + Duration::from_secs(63)));
+    }
+
+    #[test]
+    fn filter_drops_interleaved_resume_copies() {
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        let mut f = EventFilter::new();
+        assert!(f.accept(PowerEvent::ResumeAutomatic, t0));
+        assert!(f.accept(PowerEvent::ResumeSuspend, t0 + ms(10)));
+        assert!(!f.accept(PowerEvent::ResumeAutomatic, t0 + ms(20)));
+        assert!(!f.accept(PowerEvent::ResumeSuspend, t0 + ms(30)));
     }
 
     #[test]
