@@ -7,6 +7,8 @@
 //! Set `UC_HOME` to point every file at a scratch folder instead of the real
 //! `%APPDATA%`/`%LOCALAPPDATA%` ones.
 
+mod power;
+
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -52,6 +54,9 @@ enum Command {
         #[arg(long, default_value_t = 1000)]
         interval: u64,
     },
+    /// Suspend/resume, display-state and network-ready checks (WP-05).
+    #[command(subcommand)]
+    Power(power::PowerCmd),
 }
 
 #[derive(Subcommand)]
@@ -84,6 +89,7 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     match cli.command {
+        Command::Power(cmd) => return power::run(cmd),
         Command::Paths => {
             let p = Paths::from_env()?;
             println!("config: {}", p.config_file().display());
