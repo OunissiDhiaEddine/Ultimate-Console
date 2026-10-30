@@ -13,6 +13,8 @@ use clap::{Parser, Subcommand};
 use uc_core::{Config, Hotkey, Paths, RuntimeState};
 use uc_sysinfo::{Sampler, StatsSource, format_bytes, format_uptime};
 
+mod shell;
+
 #[derive(Parser)]
 #[command(
     name = "uc-probe",
@@ -36,6 +38,9 @@ enum Command {
     State(StateCmd),
     /// Check a shortcut against the built-in conflict rules, e.g. `hotkey "Ctrl+Alt+G"`.
     Hotkey { combo: String },
+    /// Explorer exit/start and Steam Big Picture (WP-03).
+    #[command(subcommand)]
+    Shell(shell::ShellCmd),
     /// Sample CPU/RAM/GPU for the system and the given PIDs, like the overlay does.
     Sysinfo {
         /// Process IDs to watch (see Task Manager's Details tab). None = system only.
@@ -133,6 +138,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 return Ok(ExitCode::FAILURE);
             }
         }
+        Command::Shell(cmd) => shell::run(cmd)?,
         Command::Sysinfo {
             pids,
             count,
