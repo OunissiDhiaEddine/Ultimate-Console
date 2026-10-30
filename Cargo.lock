@@ -685,7 +685,9 @@ dependencies = [
 name = "uc-power"
 version = "0.1.0"
 dependencies = [
+ "tracing",
  "uc-core",
+ "windows",
 ]
 
 [[package]]
@@ -694,6 +696,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "serde_json",
+ "tracing",
  "uc-audio",
  "uc-core",
  "uc-display",
@@ -715,7 +718,10 @@ dependencies = [
 name = "uc-shell"
 version = "0.1.0"
 dependencies = [
+ "thiserror",
+ "tracing",
  "uc-core",
+ "windows",
 ]
 
 [[package]]
