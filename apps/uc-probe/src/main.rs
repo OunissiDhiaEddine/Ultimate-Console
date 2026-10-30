@@ -16,6 +16,7 @@ use uc_core::{Config, Hotkey, Paths, RuntimeState};
 use uc_sysinfo::{Sampler, StatsSource, format_bytes, format_uptime};
 
 mod shell;
+mod tv;
 
 #[derive(Parser)]
 #[command(
@@ -57,6 +58,8 @@ enum Command {
     /// Suspend/resume, display-state and network-ready checks (WP-05).
     #[command(subcommand)]
     Power(power::PowerCmd),
+    /// Android TV: discover, pair, wake, sleep, state (WP-02).
+    Tv(tv::TvArgs),
 }
 
 #[derive(Subcommand)]
@@ -90,6 +93,7 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     match cli.command {
         Command::Power(cmd) => return power::run(cmd),
+        Command::Tv(args) => return tv::run(args),
         Command::Paths => {
             let p = Paths::from_env()?;
             println!("config: {}", p.config_file().display());
