@@ -3,10 +3,12 @@
 //! Each work package adds its own subcommand group here
 //! (`display`, `tv`, `shell`, `audio`, `power`, `sysinfo`, `overlay`).
 //! WP-00 provides the `uc-core` ones: `paths`, `config`, `state`, `hotkey`.
+//! WP-01 adds `display`.
 //!
 //! Set `UC_HOME` to point every file at a scratch folder instead of the real
 //! `%APPDATA%`/`%LOCALAPPDATA%` ones.
 
+mod display;
 mod power;
 
 use std::process::ExitCode;
@@ -44,6 +46,9 @@ enum Command {
     /// Audio devices and volume (WP-04).
     #[command(subcommand)]
     Audio(AudioCmd),
+    /// List, snapshot, switch and restore displays (WP-01).
+    #[command(subcommand)]
+    Display(display::DisplayCmd),
     /// Explorer exit/start and Steam Big Picture (WP-03).
     #[command(subcommand)]
     Shell(shell::ShellCmd),
@@ -181,6 +186,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             }
         }
         Command::Audio(cmd) => audio(cmd)?,
+        Command::Display(cmd) => return display::run(cmd),
         Command::Shell(cmd) => shell::run(cmd)?,
         Command::Sysinfo {
             pids,

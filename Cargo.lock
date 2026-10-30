@@ -668,7 +668,13 @@ dependencies = [
 name = "uc-display"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
  "uc-core",
+ "windows",
 ]
 
 [[package]]
