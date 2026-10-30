@@ -1,0 +1,7 @@
+/target
+**/*.rs.bk
+*.pdb
+/packaging/out/
+/Releases/
+.vscode/
+.idea/
