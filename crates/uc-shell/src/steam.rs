@@ -1,11 +1,46 @@
 //! Find Steam and open/close Big Picture (plan §2.3 step 3).
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// Opens Big Picture in a running Steam.
 pub const OPEN_BIG_PICTURE_URL: &str = "steam://open/bigpicture";
 /// Leaves Big Picture (Steam stays running in desktop mode).
 pub const CLOSE_BIG_PICTURE_URL: &str = "steam://close/bigpicture";
+/// Shows the desktop Steam window. Used to wake a Steam that sits in the
+/// tray and ignored `steam://open/bigpicture`.
+pub const OPEN_MAIN_URL: &str = "steam://open/main";
+
+/// A retry while waiting for Big Picture to show up.
+///
+/// A Steam that was closed to the tray (process running, no window) can
+/// swallow the first `steam://open/bigpicture`, or create the Big Picture
+/// window hidden. The wait therefore asks again on a schedule instead of
+/// sitting out the whole timeout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Nudge {
+    /// Hand `steam://open/bigpicture` to Steam again.
+    Resend,
+    /// Bring up the desktop Steam window first, then ask for Big Picture.
+    OpenMainThenResend,
+}
+
+/// When each [`Nudge`] fires, counted from the launch.
+pub const NUDGES: [(Duration, Nudge); 3] = [
+    (Duration::from_secs(4), Nudge::Resend),
+    (Duration::from_secs(9), Nudge::OpenMainThenResend),
+    (Duration::from_secs(16), Nudge::Resend),
+];
+
+/// The next nudge to send, given how long we have waited and how many
+/// nudges were already sent. At most one per call, so a late poll never
+/// fires two at once.
+pub fn nudge_due(elapsed: Duration, sent: usize) -> Option<Nudge> {
+    NUDGES
+        .get(sent)
+        .filter(|(at, _)| elapsed >= *at)
+        .map(|(_, n)| *n)
+}
 
 /// How [`launch_big_picture`] got Big Picture going.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +86,13 @@ mod imp {
     use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
     use windows::core::{HSTRING, PCWSTR};
 
-    use super::{CLOSE_BIG_PICTURE_URL, LaunchMethod, launch_args, normalize_registry_path};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{SW_SHOW, ShowWindow};
+
+    use super::{
+        CLOSE_BIG_PICTURE_URL, LaunchMethod, Nudge, OPEN_BIG_PICTURE_URL, OPEN_MAIN_URL,
+        launch_args, normalize_registry_path, nudge_due,
+    };
     use crate::{Error, Result, WindowInfo, WindowMatcher, win};
 
     const STEAM_KEY: &str = r"Software\Valve\Steam";
@@ -140,6 +181,99 @@ mod imp {
         }
     }
 
+    /// Like [`wait_for_big_picture`], for right after [`launch_big_picture`]:
+    /// shows a Big Picture window that Steam created hidden, and asks Steam
+    /// again on the [`NUDGES`](super::NUDGES) schedule. This is what makes a
+    /// Steam that sits in the tray open Big Picture reliably. On a timeout,
+    /// logs Steam's windows so the cause can be seen in the agent log.
+    pub fn wait_for_big_picture_nudging(
+        cfg: &Steam,
+        matcher: &WindowMatcher,
+        timeout: Duration,
+    ) -> Result<Option<WindowInfo>> {
+        let start = Instant::now();
+        let deadline = start + timeout;
+        let mut sent = 0;
+        let mut shown_hidden = false;
+        loop {
+            let windows = win::list_windows()?;
+            if let Some(w) = matcher.find(&windows) {
+                tracing::info!(
+                    after_ms = start.elapsed().as_millis() as u64,
+                    nudges = sent,
+                    "Big Picture window is up"
+                );
+                return Ok(Some(w.clone()));
+            }
+            // Give Steam a moment to show the window itself (SDL creates it
+            // hidden), then show it ourselves.
+            if !shown_hidden
+                && start.elapsed() >= Duration::from_secs(2)
+                && let Some(w) = matcher.find_hidden(&windows)
+            {
+                tracing::info!(
+                    hwnd = w.hwnd,
+                    "Big Picture window exists but is hidden; showing it"
+                );
+                // SAFETY: plain FFI call; a stale handle just fails.
+                let _ = unsafe { ShowWindow(HWND(w.hwnd as *mut _), SW_SHOW) };
+                shown_hidden = true;
+                continue;
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                log_steam_windows(&windows);
+                return Ok(None);
+            }
+            if let Some(nudge) = nudge_due(now - start, sent) {
+                sent += 1;
+                // Each nudge gets a fresh chance to un-hide a window.
+                shown_hidden = false;
+                if let Err(e) = send_nudge(cfg, nudge) {
+                    tracing::warn!(?nudge, "could not nudge Steam: {e}");
+                }
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+
+    fn send_nudge(cfg: &Steam, nudge: Nudge) -> Result<()> {
+        let exe = find_steam_exe(cfg.exe_path.as_deref())?;
+        if !steam_running()? {
+            // Still starting up from our own launch; nothing to forward to yet.
+            tracing::info!(
+                ?nudge,
+                "Big Picture not up yet and steam.exe not running; waiting"
+            );
+            return Ok(());
+        }
+        tracing::info!(?nudge, "Big Picture not up yet; asking Steam again");
+        if nudge == Nudge::OpenMainThenResend {
+            spawn(&exe, &[OPEN_MAIN_URL.to_owned()])?;
+            std::thread::sleep(Duration::from_millis(1500));
+        }
+        spawn(&exe, &[OPEN_BIG_PICTURE_URL.to_owned()])
+    }
+
+    /// Steam's top-level windows, for the log when Big Picture never showed.
+    fn log_steam_windows(windows: &[WindowInfo]) {
+        let pids: Vec<u32> = ["steam.exe", "steamwebhelper.exe"]
+            .iter()
+            .filter_map(|n| win::session_pids_named(n).ok())
+            .flatten()
+            .collect();
+        let steam_windows: Vec<_> = windows
+            .iter()
+            .filter(|w| pids.contains(&w.pid) && !w.title.is_empty())
+            .map(|w| format!("{:?} {:?} visible={}", w.class, w.title, w.visible))
+            .collect();
+        tracing::warn!(
+            steam_pids = ?pids,
+            windows = ?steam_windows,
+            "Big Picture never showed up; Steam's windows (set [steam] bp_window_title if one of these is Big Picture)"
+        );
+    }
+
     fn spawn(exe: &Path, args: &[String]) -> Result<()> {
         let mut cmd = Command::new(exe);
         cmd.args(args)
@@ -200,6 +334,28 @@ mod tests {
         let (m, args) = launch_args(false, &["-gamepadui".into(), "-silent".into()]);
         assert_eq!(m, LaunchMethod::StartedSteam);
         assert_eq!(args, vec!["-gamepadui".to_owned(), "-silent".to_owned()]);
+    }
+
+    #[test]
+    fn nudges_fire_once_each_in_order() {
+        let s = Duration::from_secs;
+        assert_eq!(nudge_due(s(1), 0), None);
+        assert_eq!(nudge_due(s(4), 0), Some(Nudge::Resend));
+        assert_eq!(nudge_due(s(5), 1), None);
+        // A late poll still sends only the next one.
+        assert_eq!(nudge_due(s(30), 1), Some(Nudge::OpenMainThenResend));
+        assert_eq!(nudge_due(s(30), 2), Some(Nudge::Resend));
+        assert_eq!(nudge_due(s(30), NUDGES.len()), None);
+    }
+
+    #[test]
+    fn nudges_fit_in_the_default_timeout() {
+        let timeout = Duration::from_secs(
+            uc_core::config::Steam::default()
+                .bp_launch_timeout_secs
+                .into(),
+        );
+        assert!(NUDGES.iter().all(|(at, _)| *at < timeout));
     }
 
     #[test]

@@ -100,7 +100,7 @@ pub fn run(cmd: ShellCmd) -> Result<(), Box<dyn std::error::Error>> {
             let method = steam::launch_big_picture(&config.steam)?;
             println!("launched: {method:?}");
             let timeout = Duration::from_secs(config.steam.bp_launch_timeout_secs.into());
-            match steam::wait_for_big_picture(&matcher, timeout)? {
+            match steam::wait_for_big_picture_nudging(&config.steam, &matcher, timeout)? {
                 Some(w) => println!(
                     "Big Picture up after {:.1} s: {w:?}",
                     start.elapsed().as_secs_f32()
