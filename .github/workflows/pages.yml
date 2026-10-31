@@ -1,0 +1,62 @@
+name: Pages
+
+# Publishes site/ (the project website) to GitHub Pages.
+# One-time setup: Settings → Pages → Build and deployment → Source: "GitHub Actions".
+# Pages on a private repo needs a paid plan, so the deploy job is skipped
+# while the repo is private; it runs on the next push (or Run workflow) once
+# the repo is public.
+
+on:
+  push:
+    branches: [main]
+    paths: ['site/**', '.github/workflows/pages.yml']
+  pull_request:
+    paths: ['site/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Check site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fails if a local link or asset in the site points at a missing file.
+      - name: Check local links
+        run: |
+          set -eu
+          cd site
+          fail=0
+          for ref in $(grep -ohE '(href|src)="[^"#:]+"' index.html | sed -E 's/^(href|src)="//; s/"$//' | sort -u); do
+            if [ ! -e "$ref" ]; then echo "::error file=site/index.html::missing $ref"; fail=1; fi
+          done
+          for id in $(grep -ohE 'href="#[^"]+"' index.html | sed -E 's/^href="#//; s/"$//' | sort -u); do
+            if ! grep -q "id=\"$id\"" index.html; then echo "::error file=site/index.html::no element with id $id"; fail=1; fi
+          done
+          exit $fail
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: Deploy
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && !github.event.repository.private
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

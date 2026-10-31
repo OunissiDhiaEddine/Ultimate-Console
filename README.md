@@ -82,6 +82,8 @@ Set `UC_HOME=C:\some\folder` to make every binary use that folder instead of
 
 ## Docs
 
+- Website (install and setup guide): https://ounissidhiaeddine.github.io/Ultimate-Console/
+  (source in `site/`, deployed by `.github/workflows/pages.yml`).
 - `docs/PLAN.md`: architecture, decisions and work packages.
 - `docs/tests/`: short manual test checklists, one per work package.
 - `CONTRIBUTING.md`: branch, PR and code conventions.
