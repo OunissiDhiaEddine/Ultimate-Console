@@ -9,6 +9,22 @@ publish = false
 
 [dependencies]
 uc-core.workspace = true
+eframe.workspace = true
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Console",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+] }
+
+# Lets the app build and run its tests on Linux during development.
+[target.'cfg(not(windows))'.dependencies]
+eframe = { workspace = true, features = ["x11"] }
 
 [lints]
 workspace = true
