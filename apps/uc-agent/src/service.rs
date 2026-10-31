@@ -30,8 +30,10 @@ const KEEPALIVE_EVERY: Duration = Duration::from_secs(30);
 
 /// Work for the orchestrator thread.
 pub enum Command {
-    /// Gaming-mode hotkey.
-    Toggle,
+    /// Gaming-mode hotkey, with the mode shown when it was pressed.
+    Toggle {
+        pressed_in: Mode,
+    },
     /// Panic hotkey or settings app.
     Panic,
     Enter,
@@ -131,11 +133,15 @@ impl Service {
 
     fn handle(&mut self, cmd: Command) {
         match cmd {
-            Command::Toggle => {
-                match self.orch.mode() {
-                    Mode::Desktop => self.enter(),
-                    Mode::Gaming => self.exit(),
-                    mode => tracing::info!(?mode, "toggle ignored mid-change"),
+            Command::Toggle { pressed_in } => {
+                match toggle_action(pressed_in, self.orch.mode()) {
+                    Some(Mode::Gaming) => self.enter(),
+                    Some(_) => self.exit(),
+                    None => tracing::info!(
+                        ?pressed_in,
+                        now = ?self.orch.mode(),
+                        "toggle ignored: the mode changed since it was pressed"
+                    ),
                 }
                 self.shared.toggle_handled();
             }
@@ -179,6 +185,7 @@ impl Service {
             self.last_keepalive = Instant::now();
             self.orch.platform_mut().tv_keepalive();
         }
+        self.orch.recheck_big_picture();
         self.updates.tick();
     }
 
@@ -277,5 +284,39 @@ impl Service {
         self.shared.set_config(new.clone());
         self.orch.set_config(new);
         self.shared.emit(IpcEvent::ConfigReloaded);
+    }
+}
+
+/// What a gaming-mode press does once the orchestrator gets to it: the mode
+/// to go to, or `None` if the mode changed since the press. A press while
+/// gaming mode is leaving on its own (Big Picture closed) must not start it
+/// again a moment later, and a press mid-change does nothing.
+pub fn toggle_action(pressed_in: Mode, now: Mode) -> Option<Mode> {
+    match (pressed_in, now) {
+        (Mode::Desktop, Mode::Desktop) => Some(Mode::Gaming),
+        (Mode::Gaming, Mode::Gaming) => Some(Mode::Desktop),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod toggle_tests {
+    use super::*;
+
+    #[test]
+    fn toggle_acts_only_if_the_mode_is_unchanged() {
+        assert_eq!(
+            toggle_action(Mode::Desktop, Mode::Desktop),
+            Some(Mode::Gaming)
+        );
+        assert_eq!(
+            toggle_action(Mode::Gaming, Mode::Gaming),
+            Some(Mode::Desktop)
+        );
+        // Pressed while gaming mode was leaving by itself: no re-entry.
+        assert_eq!(toggle_action(Mode::Gaming, Mode::Desktop), None);
+        assert_eq!(toggle_action(Mode::Exiting, Mode::Desktop), None);
+        assert_eq!(toggle_action(Mode::Entering, Mode::Gaming), None);
+        assert_eq!(toggle_action(Mode::Desktop, Mode::Gaming), None);
     }
 }

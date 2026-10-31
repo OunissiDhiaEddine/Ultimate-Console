@@ -27,7 +27,10 @@ const POLL: Duration = Duration::from_millis(100);
 const STRAGGLER_GRACE: Duration = Duration::from_secs(1);
 /// When `explorer.exe` processes exist but no taskbar yet, how long to wait
 /// for one of them to become the shell before launching another.
-const STARTING_SHELL_GRACE: Duration = Duration::from_secs(3);
+const STARTING_SHELL_GRACE: Duration = Duration::from_millis(1500);
+/// After leftover `explorer.exe` processes are terminated, how long Winlogon
+/// gets to start a shell by itself before we launch one.
+const WINLOGON_RESTART_GRACE: Duration = Duration::from_secs(3);
 /// How often the exit message is posted again while the taskbar is still up.
 /// A shell that only just started (e.g. we relaunched it a few seconds ago)
 /// can ignore the first one.
@@ -54,7 +57,8 @@ pub struct ExitReport {
 pub enum StartReport {
     /// A shell (taskbar) was already there; nothing was launched.
     AlreadyRunning,
-    /// An `explorer.exe` that was already starting became the shell.
+    /// An `explorer.exe` that was already starting became the shell, or
+    /// Winlogon started one after leftovers were terminated.
     BecameShell { elapsed: Duration },
     /// `explorer.exe` was launched. `shell_ready` is false if the taskbar did
     /// not show up within the wait (Explorer may still be starting).
@@ -182,19 +186,85 @@ fn post_exit(hwnd: HWND) -> Result<()> {
 
 /// Starts the Explorer shell if it isn't running and waits up to `wait` for
 /// the taskbar to appear.
+///
+/// `explorer.exe` processes without a taskbar are given a moment to become
+/// the shell. If none does, they are leftovers (typically the old shell
+/// still hanging around after it was asked to exit) and are terminated
+/// first: launching Explorer next to one of them hands the launch over to
+/// the half-dead process and leaves two `explorer.exe` and a broken desktop.
 pub fn start_explorer(wait: Duration) -> Result<StartReport> {
     let start = Instant::now();
     if shell_running() {
         return Ok(StartReport::AlreadyRunning);
     }
-    // An explorer.exe without a taskbar may be a shell that's still starting
-    // (e.g. Winlogon restarted it). Give it a moment rather than racing it.
-    if explorer_running()? && wait_for_shell(STARTING_SHELL_GRACE.min(wait)) {
-        return Ok(StartReport::BecameShell {
-            elapsed: start.elapsed(),
-        });
+    if explorer_running()? {
+        if wait_for_shell(STARTING_SHELL_GRACE.min(wait)) {
+            return Ok(StartReport::BecameShell {
+                elapsed: start.elapsed(),
+            });
+        }
+        let killed = terminate_all()?;
+        tracing::info!(
+            ?killed,
+            "terminated explorer.exe processes without a taskbar"
+        );
+        if wait_for_shell(WINLOGON_RESTART_GRACE) {
+            return Ok(StartReport::BecameShell {
+                elapsed: start.elapsed(),
+            });
+        }
     }
+    launch(start, wait)
+}
 
+/// What Task Manager's "Restart" on Windows Explorer does: terminates every
+/// `explorer.exe` in this session and makes sure a fresh shell comes up
+/// (Winlogon usually restarts it; otherwise it is launched). For the panic
+/// hotkey, when the desktop is in a state nothing else fixes.
+pub fn restart_explorer(wait: Duration) -> Result<(Vec<u32>, StartReport)> {
+    let start = Instant::now();
+    let killed = terminate_all()?;
+    tracing::info!(?killed, "restarting Explorer");
+    if !killed.is_empty() {
+        // Let the old taskbar go away before checking for the new one.
+        let gone_by = Instant::now() + Duration::from_secs(2);
+        while shell_running() && Instant::now() < gone_by {
+            std::thread::sleep(POLL);
+        }
+        if !shell_running() && wait_for_shell(WINLOGON_RESTART_GRACE) {
+            return Ok((
+                killed,
+                StartReport::BecameShell {
+                    elapsed: start.elapsed(),
+                },
+            ));
+        }
+    }
+    if shell_running() {
+        return Ok((killed, StartReport::AlreadyRunning));
+    }
+    Ok((killed, launch(start, wait)?))
+}
+
+/// Terminates every `explorer.exe` in this session; returns the PIDs that
+/// went. Failures are logged and skipped.
+fn terminate_all() -> Result<Vec<u32>> {
+    let mut killed = Vec::new();
+    for pid in explorer_pids()? {
+        match win::terminate(pid) {
+            Ok(()) => killed.push(pid),
+            Err(e) => tracing::warn!(pid, "could not terminate explorer.exe: {e}"),
+        }
+    }
+    // Wait for them to really be gone (TerminateProcess is asynchronous).
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline && explorer_pids()?.iter().any(|p| killed.contains(p)) {
+        std::thread::sleep(POLL);
+    }
+    Ok(killed)
+}
+
+fn launch(start: Instant, wait: Duration) -> Result<StartReport> {
     let exe = explorer_exe();
     tracing::info!(exe = %exe.display(), "starting Explorer");
     let child = Command::new(&exe)

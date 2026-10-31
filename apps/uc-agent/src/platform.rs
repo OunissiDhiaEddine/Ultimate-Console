@@ -19,7 +19,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IsIconic, SW_RESTORE, SetForegroundWindow, ShowWindow,
 };
 
-use crate::orchestrator::{EXPLORER_EXIT_TIMEOUT, Platform, Step};
+use crate::orchestrator::{BpVerdict, EXPLORER_EXIT_TIMEOUT, Platform, Step};
 use crate::service::Command;
 use crate::shared::{Shared, lock};
 
@@ -210,6 +210,13 @@ impl Platform for RealPlatform {
         Ok(())
     }
 
+    fn restart_explorer(&mut self) -> Step {
+        let (killed, report) =
+            explorer::restart_explorer(EXPLORER_START_WAIT).map_err(|e| e.to_string())?;
+        tracing::info!(?killed, ?report, "Explorer restart");
+        Ok(())
+    }
+
     fn launch_big_picture(&mut self, steam: &Steam) -> Step {
         steam::launch_big_picture(steam)
             .map(drop)
@@ -230,21 +237,30 @@ impl Platform for RealPlatform {
         find_window(steam).is_some()
     }
 
-    fn big_picture_gone(&mut self, steam: &Steam, grace: Duration) -> bool {
+    fn big_picture_verdict(&mut self, steam: &Steam, grace: Duration) -> BpVerdict {
+        let matcher = WindowMatcher::from_config(steam);
         let deadline = std::time::Instant::now() + grace;
         loop {
-            if let Some(app) = steam::running_game() {
-                tracing::info!(app, "Big Picture window gone but a Steam game is running");
-                return false;
+            let verdict = match steam::view(&matcher) {
+                Ok(view) => {
+                    let v = view.verdict();
+                    if v != BpVerdict::Back && grace > Duration::ZERO {
+                        tracing::info!(?view, ?v, "Big Picture window gone");
+                    }
+                    v
+                }
+                Err(e) => {
+                    tracing::warn!("could not look at Steam's windows: {e}");
+                    BpVerdict::Unsure
+                }
+            };
+            if verdict != BpVerdict::Unsure || std::time::Instant::now() >= deadline {
+                if verdict == BpVerdict::Unsure && grace > Duration::ZERO {
+                    steam::log_windows("Big Picture gone, unclear why; staying in gaming mode");
+                }
+                return verdict;
             }
-            if find_window(steam).is_some() {
-                tracing::info!("Big Picture window came back");
-                return false;
-            }
-            if std::time::Instant::now() >= deadline {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(250));
+            std::thread::sleep(Duration::from_millis(500));
         }
     }
 
