@@ -29,7 +29,10 @@ use crate::shared::Shared;
 pub type Step<T = ()> = Result<T, String>;
 
 /// How long `exit_explorer` may wait for the shell to go (plan §2.3).
-pub const EXPLORER_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+pub const EXPLORER_EXIT_TIMEOUT: Duration = Duration::from_secs(12);
+/// After the watcher reports Big Picture closed, how long it may take to come
+/// back (a game exiting, Steam recreating its window) before gaming mode ends.
+pub const BP_REAPPEAR_GRACE: Duration = Duration::from_secs(6);
 
 /// Everything the state machine needs from the OS. The real one is in
 /// `platform.rs`; tests use a fake.
@@ -54,6 +57,10 @@ pub trait Platform {
     /// it did not show up in time.
     fn wait_big_picture(&mut self, steam: &Steam, timeout: Duration) -> Step<bool>;
     fn big_picture_open(&mut self, steam: &Steam) -> bool;
+    /// After the watcher reported Big Picture closed: true only if it stays
+    /// gone for `grace` and no Steam game is running. A game starting or
+    /// exiting can hide or recreate the Big Picture window for a while.
+    fn big_picture_gone(&mut self, steam: &Steam, grace: Duration) -> bool;
     fn focus_big_picture(&mut self, steam: &Steam);
     /// Leaves Big Picture; Steam keeps running on the desktop.
     fn close_big_picture(&mut self, steam: &Steam);
@@ -352,9 +359,16 @@ impl<P: Platform> Orchestrator<P> {
 
     /// Big Picture has been gone for the whole debounce.
     pub fn on_big_picture_closed(&mut self) {
-        if self.state.mode == Mode::Gaming {
-            let _ = self.exit(ExitTrigger::BigPictureClosed);
+        if self.state.mode != Mode::Gaming {
+            return;
         }
+        let steam = self.config.steam.clone();
+        if !self.platform.big_picture_gone(&steam, BP_REAPPEAR_GRACE) {
+            // The watcher keeps running and reports the next close.
+            tracing::info!("Big Picture is back or a game is running; staying in gaming mode");
+            return;
+        }
+        let _ = self.exit(ExitTrigger::BigPictureClosed);
     }
 
     /// After resume in gaming mode: network, TV, display, focus (plan §2.7).
@@ -549,6 +563,10 @@ pub(crate) mod tests {
         fn big_picture_open(&mut self, _: &Steam) -> bool {
             self.bp_open
         }
+        fn big_picture_gone(&mut self, _: &Steam, _: Duration) -> bool {
+            self.calls.push("big_picture_gone".into());
+            !self.bp_open
+        }
         fn focus_big_picture(&mut self, _: &Steam) {
             let _ = self.call("focus_big_picture");
         }
@@ -695,6 +713,17 @@ pub(crate) mod tests {
         // Ignored in desktop mode.
         r.orch.on_big_picture_closed();
         assert!(r.calls().is_empty());
+    }
+
+    #[test]
+    fn big_picture_coming_back_keeps_gaming_mode() {
+        let mut r = rig(configured(), Fake::default());
+        r.orch.enter().unwrap();
+        r.calls();
+        r.orch.platform_mut().bp_open = true;
+        r.orch.on_big_picture_closed();
+        assert_eq!(r.calls(), vec!["big_picture_gone".to_string()]);
+        assert_eq!(r.orch.mode(), Mode::Gaming);
     }
 
     #[test]

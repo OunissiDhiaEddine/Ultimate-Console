@@ -756,15 +756,27 @@ pub fn restore(saved: &Topology) -> Result<RestoreOutcome> {
     // again after the layout change for the ones that just came back.
     restore_hdr(&t);
 
-    let exact = Config::query(QDC_ALL_PATHS).and_then(|now| {
-        t.remap_adapters(&now.adapters())?;
-        let paths: Vec<_> = t.paths.iter().map(path_to).collect();
-        let modes: Vec<_> = t.modes.iter().map(mode_to).collect();
-        set_config(
-            &paths,
-            &modes,
-            SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_SAVE_TO_DATABASE | SDC_ALLOW_CHANGES,
-        )
+    let mut try_exact = || {
+        Config::query(QDC_ALL_PATHS).and_then(|now| {
+            t.remap_adapters(&now.adapters())?;
+            let paths: Vec<_> = t.paths.iter().map(path_to).collect();
+            let modes: Vec<_> = t.modes.iter().map(mode_to).collect();
+            set_config(
+                &paths,
+                &modes,
+                SDC_APPLY
+                    | SDC_USE_SUPPLIED_DISPLAY_CONFIG
+                    | SDC_SAVE_TO_DATABASE
+                    | SDC_ALLOW_CHANGES,
+            )
+        })
+    };
+    // ERROR_GEN_FAILURE (31) shows up now and then right after the TV mode
+    // was in use (the driver is still settling); a second try usually works.
+    let exact = try_exact().or_else(|e| {
+        debug!("exact topology restore failed ({e}); retrying once");
+        std::thread::sleep(Duration::from_millis(750));
+        try_exact()
     });
     let outcome = match exact {
         Ok(()) => RestoreOutcome::Exact,
