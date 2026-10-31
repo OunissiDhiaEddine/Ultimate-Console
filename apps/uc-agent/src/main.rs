@@ -21,6 +21,7 @@ mod hotkeys;
 mod orchestrator;
 mod overlay;
 mod shared;
+mod updates;
 
 #[cfg(windows)]
 mod autostart;
@@ -121,6 +122,7 @@ fn run(restarted: bool) -> Result<(), String> {
     }
     shared.sync_tv_status(&config);
 
+    let updates = updates::Updates::new(shared.clone(), &paths);
     let (commands, inbox) = mpsc::channel();
     let overlay = Arc::new(OverlayHost::start(&config));
     let window = Window::create(
@@ -140,7 +142,7 @@ fn run(restarted: bool) -> Result<(), String> {
         tv: tv.clone(),
         commands: commands.clone(),
         window: handle,
-        paths: paths.clone(),
+        updates: updates.clone(),
     }) {
         shared.report_error(format!("settings app connection unavailable: {e}"));
     }
@@ -151,8 +153,16 @@ fn run(restarted: bool) -> Result<(), String> {
         .spawn(move || {
             let platform = RealPlatform::new(shared.clone(), tv.clone(), commands);
             let orch = Orchestrator::new(platform, config, paths.state_file(), shared.clone());
-            Service::new(orch, shared, tv, handle, overlay, paths.config_file())
-                .run(paths.state_file(), inbox);
+            Service::new(
+                orch,
+                shared,
+                tv,
+                handle,
+                overlay,
+                updates,
+                paths.config_file(),
+            )
+            .run(paths.state_file(), inbox);
         })
         .map_err(|e| e.to_string())?;
 

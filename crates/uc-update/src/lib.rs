@@ -16,7 +16,7 @@
 //! - [`uninstall`]: deletes the app's own files (config, state, keys, logs).
 //!
 //! Like every crate here this one has no policy: the agent decides *when* to
-//! check and apply (daily, and never in gaming mode).
+//! check and apply (daily, and never in gaming mode; see `apps/uc-agent/src/updates.rs`).
 
 pub mod autostart;
 mod error;

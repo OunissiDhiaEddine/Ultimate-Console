@@ -3053,6 +3053,7 @@ dependencies = [
  "uc-shell",
  "uc-sysinfo",
  "uc-tv",
+ "uc-update",
  "windows",
 ]
 

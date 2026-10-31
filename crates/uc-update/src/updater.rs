@@ -7,7 +7,7 @@
 //! restarts the main exe (`uc-settings.exe`) with [`crate::START_AGENT_ARG`],
 //! which starts the new agent without opening a window.
 
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use uc_core::ipc::UpdateStatus;
 use velopack::sources::GithubSource;
@@ -109,17 +109,6 @@ pub fn repo_url(repo: &str) -> Result<String> {
     }
 }
 
-/// Whether the daily check is due, given when the last one ran.
-pub fn check_due(last_check: Option<SystemTime>, now: SystemTime) -> bool {
-    match last_check {
-        None => true,
-        // A clock that jumped backwards counts as due rather than never.
-        Some(last) => now
-            .duration_since(last)
-            .map_or(true, |since| since >= CHECK_INTERVAL),
-    }
-}
-
 /// The IPC answer for a check result.
 pub fn status_for(current_version: &str, result: &Result<Option<PendingUpdate>>) -> UpdateStatus {
     match result {
@@ -149,15 +138,6 @@ mod tests {
         for bad in ["", "noslash", "a/", "/b", "a/b/c", "a b/c", "a/b?x=1"] {
             assert!(repo_url(bad).is_err(), "{bad:?}");
         }
-    }
-
-    #[test]
-    fn daily_check() {
-        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(10 * CHECK_INTERVAL.as_secs());
-        assert!(check_due(None, now));
-        assert!(!check_due(Some(now - Duration::from_secs(3600)), now));
-        assert!(check_due(Some(now - CHECK_INTERVAL), now));
-        assert!(check_due(Some(now + Duration::from_secs(60)), now));
     }
 
     #[test]
