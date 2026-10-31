@@ -34,6 +34,10 @@ pub const EXPLORER_EXIT_TIMEOUT: Duration = Duration::from_secs(12);
 /// After the watcher reports Big Picture closed, how long it may take to come
 /// back (a game exiting, Steam recreating its window) before gaming mode ends.
 pub const BP_REAPPEAR_GRACE: Duration = Duration::from_secs(3);
+/// With no game running and no clear sign either way, how long Big Picture
+/// may stay missing before gaming mode ends anyway (for a Steam that leaves
+/// Big Picture without showing a new desktop window).
+pub const BP_UNSURE_EXIT_AFTER: Duration = Duration::from_secs(25);
 
 /// Everything the state machine needs from the OS. The real one is in
 /// `platform.rs`; tests use a fake.
@@ -131,6 +135,9 @@ pub struct Orchestrator<P: Platform> {
     /// Big Picture's window went in gaming mode and it isn't clear yet
     /// whether it was left; ticks keep checking.
     bp_missing: bool,
+    /// Since when the verdict has been `Unsure` (a running game resets it).
+    bp_unsure_since: Option<std::time::Instant>,
+    unsure_exit_after: Duration,
 }
 
 impl<P: Platform> Orchestrator<P> {
@@ -142,6 +149,8 @@ impl<P: Platform> Orchestrator<P> {
             state_file,
             shared,
             bp_missing: false,
+            bp_unsure_since: None,
+            unsure_exit_after: BP_UNSURE_EXIT_AFTER,
         }
     }
 
@@ -208,6 +217,7 @@ impl<P: Platform> Orchestrator<P> {
             )));
         }
         self.bp_missing = false;
+        self.bp_unsure_since = None;
         let Some(target) = self.config.display.target.clone() else {
             let msg = "pick the TV in the settings app (Display page) first";
             self.shared.report_error(format!("Gaming mode: {msg}"));
@@ -331,6 +341,7 @@ impl<P: Platform> Orchestrator<P> {
             )));
         }
         self.bp_missing = false;
+        self.bp_unsure_since = None;
         tracing::info!(?trigger, "leaving gaming mode");
         self.state.mode = Mode::Exiting;
         let _ = self.save();
@@ -400,6 +411,23 @@ impl<P: Platform> Orchestrator<P> {
         let steam = self.config.steam.clone();
         let verdict = self.platform.big_picture_verdict(&steam, grace);
         let was_missing = std::mem::replace(&mut self.bp_missing, true);
+        let verdict = if verdict == BpVerdict::Unsure {
+            let since = *self
+                .bp_unsure_since
+                .get_or_insert_with(std::time::Instant::now);
+            if since.elapsed() >= self.unsure_exit_after {
+                tracing::info!(
+                    after = ?self.unsure_exit_after,
+                    "Big Picture still gone and no game running; treating it as left"
+                );
+                BpVerdict::Left
+            } else {
+                verdict
+            }
+        } else {
+            self.bp_unsure_since = None;
+            verdict
+        };
         match verdict {
             BpVerdict::Left => {
                 tracing::info!("Big Picture was left; leaving gaming mode");
@@ -793,6 +821,29 @@ pub(crate) mod tests {
         // No more checks in desktop mode.
         r.orch.recheck_big_picture();
         assert!(r.calls().is_empty());
+    }
+
+    #[test]
+    fn big_picture_missing_too_long_without_a_game_leaves() {
+        let mut r = rig(configured(), Fake::default());
+        r.orch.unsure_exit_after = Duration::ZERO;
+        r.orch.enter().unwrap();
+        r.orch.platform_mut().bp_verdict = BpVerdict::Unsure;
+        r.orch.on_big_picture_closed();
+        assert_eq!(r.orch.mode(), Mode::Desktop);
+    }
+
+    #[test]
+    fn a_running_game_resets_the_unsure_clock() {
+        let mut r = rig(configured(), Fake::default());
+        r.orch.enter().unwrap();
+        r.orch.platform_mut().bp_verdict = BpVerdict::Unsure;
+        r.orch.on_big_picture_closed();
+        assert!(r.orch.bp_unsure_since.is_some());
+        r.orch.platform_mut().bp_verdict = BpVerdict::GameRunning;
+        r.orch.recheck_big_picture();
+        assert!(r.orch.bp_unsure_since.is_none());
+        assert_eq!(r.orch.mode(), Mode::Gaming);
     }
 
     #[test]

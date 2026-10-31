@@ -79,7 +79,8 @@ pub struct SteamView {
     pub big_picture_visible: bool,
     /// A Big Picture window exists but is hidden.
     pub big_picture_hidden: bool,
-    /// The desktop Steam window is showing.
+    /// A desktop Steam window is showing that was not showing when gaming
+    /// mode started (one left open on the desktop doesn't count).
     pub main_window_visible: bool,
 }
 
@@ -230,13 +231,35 @@ mod imp {
         Ok(true)
     }
 
-    /// Steam's state as seen now; see [`SteamView::verdict`].
-    pub fn view(matcher: &WindowMatcher) -> Result<SteamView> {
-        let pids: Vec<u32> = ["steam.exe", "steamwebhelper.exe"]
+    fn steam_pids() -> Vec<u32> {
+        ["steam.exe", "steamwebhelper.exe"]
             .iter()
             .filter_map(|n| win::session_pids_named(n).ok())
             .flatten()
-            .collect();
+            .collect()
+    }
+
+    /// Handles of the desktop Steam windows showing now.
+    pub fn main_windows() -> Vec<isize> {
+        let pids = steam_pids();
+        win::list_windows()
+            .unwrap_or_default()
+            .iter()
+            .filter(|w| {
+                w.visible
+                    && pids.contains(&w.pid)
+                    && w.title
+                        .trim()
+                        .eq_ignore_ascii_case(super::MAIN_WINDOW_TITLE)
+            })
+            .map(|w| w.hwnd)
+            .collect()
+    }
+
+    /// Steam's state as seen now; see [`SteamView::verdict`]. Desktop Steam
+    /// windows in `known_main` (open since before gaming mode) are ignored.
+    pub fn view(matcher: &WindowMatcher, known_main: &[isize]) -> Result<SteamView> {
+        let pids = steam_pids();
         let windows = win::list_windows()?;
         let steam_running = !win::session_pids_named("steam.exe")?.is_empty();
         Ok(SteamView {
@@ -246,6 +269,7 @@ mod imp {
             big_picture_hidden: matcher.find_hidden(&windows).is_some(),
             main_window_visible: windows.iter().any(|w| {
                 w.visible
+                    && !known_main.contains(&w.hwnd)
                     && pids.contains(&w.pid)
                     && w.title
                         .trim()
@@ -371,7 +395,12 @@ mod imp {
         let steam_windows: Vec<_> = windows
             .iter()
             .filter(|w| pids.contains(&w.pid) && !w.title.is_empty())
-            .map(|w| format!("{:?} {:?} visible={}", w.class, w.title, w.visible))
+            .map(|w| {
+                format!(
+                    "{:#x} {:?} {:?} visible={}",
+                    w.hwnd, w.class, w.title, w.visible
+                )
+            })
             .collect();
         tracing::info!(steam_pids = ?pids, windows = ?steam_windows, "{why}; Steam's windows");
     }
