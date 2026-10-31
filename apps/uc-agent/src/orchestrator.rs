@@ -24,6 +24,7 @@ use uc_core::state::{EnterStep, Mode};
 use uc_core::{Config, RuntimeState};
 
 use crate::shared::Shared;
+pub use uc_shell::steam::BpVerdict;
 
 /// Result of one OS step. The error is a sentence for the log and the user.
 pub type Step<T = ()> = Result<T, String>;
@@ -32,7 +33,7 @@ pub type Step<T = ()> = Result<T, String>;
 pub const EXPLORER_EXIT_TIMEOUT: Duration = Duration::from_secs(12);
 /// After the watcher reports Big Picture closed, how long it may take to come
 /// back (a game exiting, Steam recreating its window) before gaming mode ends.
-pub const BP_REAPPEAR_GRACE: Duration = Duration::from_secs(6);
+pub const BP_REAPPEAR_GRACE: Duration = Duration::from_secs(3);
 
 /// Everything the state machine needs from the OS. The real one is in
 /// `platform.rs`; tests use a fake.
@@ -51,16 +52,20 @@ pub trait Platform {
     fn shell_running(&mut self) -> bool;
     fn exit_explorer(&mut self) -> Step;
     fn start_explorer(&mut self) -> Step;
+    /// Terminates every Explorer and brings up a fresh shell (panic hotkey).
+    fn restart_explorer(&mut self) -> Step;
 
     fn launch_big_picture(&mut self, steam: &Steam) -> Step;
     /// Waits for the Big Picture window and brings it to the front. False if
     /// it did not show up in time.
     fn wait_big_picture(&mut self, steam: &Steam, timeout: Duration) -> Step<bool>;
     fn big_picture_open(&mut self, steam: &Steam) -> bool;
-    /// After the watcher reported Big Picture closed: true only if it stays
-    /// gone for `grace` and no Steam game is running. A game starting or
-    /// exiting can hide or recreate the Big Picture window for a while.
-    fn big_picture_gone(&mut self, steam: &Steam, grace: Duration) -> bool;
+
+    /// After the watcher reported Big Picture closed: polls Steam for up to
+    /// `grace` and returns as soon as the answer is clear (anything but
+    /// `Unsure`), else `Unsure`. A game starting or quitting hides or
+    /// recreates the Big Picture window for a while.
+    fn big_picture_verdict(&mut self, steam: &Steam, grace: Duration) -> BpVerdict;
     fn focus_big_picture(&mut self, steam: &Steam);
     /// Leaves Big Picture; Steam keeps running on the desktop.
     fn close_big_picture(&mut self, steam: &Steam);
@@ -123,6 +128,9 @@ pub struct Orchestrator<P: Platform> {
     state: RuntimeState,
     state_file: PathBuf,
     shared: Arc<Shared>,
+    /// Big Picture's window went in gaming mode and it isn't clear yet
+    /// whether it was left; ticks keep checking.
+    bp_missing: bool,
 }
 
 impl<P: Platform> Orchestrator<P> {
@@ -133,6 +141,7 @@ impl<P: Platform> Orchestrator<P> {
             state: RuntimeState::default(),
             state_file,
             shared,
+            bp_missing: false,
         }
     }
 
@@ -198,6 +207,7 @@ impl<P: Platform> Orchestrator<P> {
                 self.state.mode
             )));
         }
+        self.bp_missing = false;
         let Some(target) = self.config.display.target.clone() else {
             let msg = "pick the TV in the settings app (Display page) first";
             self.shared.report_error(format!("Gaming mode: {msg}"));
@@ -320,6 +330,7 @@ impl<P: Platform> Orchestrator<P> {
                 self.state.mode
             )));
         }
+        self.bp_missing = false;
         tracing::info!(?trigger, "leaving gaming mode");
         self.state.mode = Mode::Exiting;
         let _ = self.save();
@@ -339,10 +350,18 @@ impl<P: Platform> Orchestrator<P> {
             self.state = RuntimeState::default();
         }
         self.state.mode = Mode::Exiting;
-        self.state.mark_done(EnterStep::ExplorerExited);
+        // Explorer is handled last, and harder than a normal exit: the user
+        // presses panic because the desktop is broken, and a taskbar can be
+        // up while Explorer is not usable. Restart it like Task Manager does.
+        self.state
+            .steps_done
+            .retain(|s| *s != EnterStep::ExplorerExited);
         let _ = self.save();
         self.shared.set_mode(Mode::Exiting);
-        let errors = self.undo(true);
+        let mut errors = self.undo(true);
+        if let Err(e) = self.platform.restart_explorer() {
+            errors.push(format!("could not restart Explorer: {e}"));
+        }
         self.finish_restore(errors, "Panic restore");
     }
 
@@ -358,17 +377,45 @@ impl<P: Platform> Orchestrator<P> {
     }
 
     /// Big Picture has been gone for the whole debounce.
+    ///
+    /// Leaves gaming mode only on clear signs that Big Picture was left
+    /// (Steam quit or shows its desktop window). Otherwise stays, and
+    /// [`Self::recheck_big_picture`] keeps looking.
     pub fn on_big_picture_closed(&mut self) {
         if self.state.mode != Mode::Gaming {
             return;
         }
-        let steam = self.config.steam.clone();
-        if !self.platform.big_picture_gone(&steam, BP_REAPPEAR_GRACE) {
-            // The watcher keeps running and reports the next close.
-            tracing::info!("Big Picture is back or a game is running; staying in gaming mode");
-            return;
+        self.decide_big_picture(BP_REAPPEAR_GRACE);
+    }
+
+    /// Called every service tick: while Big Picture is missing in gaming
+    /// mode, notices when it is back or clearly left.
+    pub fn recheck_big_picture(&mut self) {
+        if self.state.mode == Mode::Gaming && self.bp_missing {
+            self.decide_big_picture(Duration::ZERO);
         }
-        let _ = self.exit(ExitTrigger::BigPictureClosed);
+    }
+
+    fn decide_big_picture(&mut self, grace: Duration) {
+        let steam = self.config.steam.clone();
+        let verdict = self.platform.big_picture_verdict(&steam, grace);
+        let was_missing = std::mem::replace(&mut self.bp_missing, true);
+        match verdict {
+            BpVerdict::Left => {
+                tracing::info!("Big Picture was left; leaving gaming mode");
+                let _ = self.exit(ExitTrigger::BigPictureClosed);
+            }
+            BpVerdict::Back => {
+                self.bp_missing = false;
+                if was_missing {
+                    tracing::info!("Big Picture is back");
+                }
+            }
+            v if !was_missing => {
+                tracing::info!(verdict = ?v, "Big Picture window gone; staying in gaming mode");
+            }
+            _ => {}
+        }
     }
 
     /// After resume in gaming mode: network, TV, display, focus (plan §2.7).
@@ -501,6 +548,7 @@ pub(crate) mod tests {
         pub fail: HashSet<&'static str>,
         pub shell: bool,
         pub bp_open: bool,
+        pub bp_verdict: BpVerdict,
         /// Set the shared abort flag when this call happens.
         pub abort_on: Option<(&'static str, Arc<Shared>)>,
     }
@@ -553,6 +601,9 @@ pub(crate) mod tests {
         fn start_explorer(&mut self) -> Step {
             self.call("start_explorer")
         }
+        fn restart_explorer(&mut self) -> Step {
+            self.call("restart_explorer")
+        }
         fn launch_big_picture(&mut self, _: &Steam) -> Step {
             self.call("launch_big_picture")
         }
@@ -563,9 +614,9 @@ pub(crate) mod tests {
         fn big_picture_open(&mut self, _: &Steam) -> bool {
             self.bp_open
         }
-        fn big_picture_gone(&mut self, _: &Steam, _: Duration) -> bool {
-            self.calls.push("big_picture_gone".into());
-            !self.bp_open
+        fn big_picture_verdict(&mut self, _: &Steam, _: Duration) -> BpVerdict {
+            self.calls.push("big_picture_verdict".into());
+            self.bp_verdict
         }
         fn focus_big_picture(&mut self, _: &Steam) {
             let _ = self.call("focus_big_picture");
@@ -699,7 +750,11 @@ pub(crate) mod tests {
 
     #[test]
     fn big_picture_closing_exits_without_closing_it_again() {
-        let mut r = rig(configured(), Fake::default());
+        let fake = Fake {
+            bp_verdict: BpVerdict::Left,
+            ..Fake::default()
+        };
+        let mut r = rig(configured(), fake);
         r.orch.enter().unwrap();
         r.calls();
         r.orch.on_big_picture_closed();
@@ -716,13 +771,41 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn big_picture_coming_back_keeps_gaming_mode() {
+    fn unclear_big_picture_close_stays_then_leaves_when_clear() {
         let mut r = rig(configured(), Fake::default());
         r.orch.enter().unwrap();
         r.calls();
-        r.orch.platform_mut().bp_open = true;
+        // A game just quit: nothing to go on, stay.
+        r.orch.platform_mut().bp_verdict = BpVerdict::Unsure;
         r.orch.on_big_picture_closed();
-        assert_eq!(r.calls(), vec!["big_picture_gone".to_string()]);
+        assert_eq!(r.calls(), ["big_picture_verdict"]);
+        assert_eq!(r.orch.mode(), Mode::Gaming);
+        // Ticks keep checking while it is missing.
+        r.orch.platform_mut().bp_verdict = BpVerdict::GameRunning;
+        r.orch.recheck_big_picture();
+        assert_eq!(r.calls(), ["big_picture_verdict"]);
+        assert_eq!(r.orch.mode(), Mode::Gaming);
+        // Steam shows its desktop window: leave.
+        r.orch.platform_mut().bp_verdict = BpVerdict::Left;
+        r.orch.recheck_big_picture();
+        assert!(r.calls().contains(&"start_explorer".to_string()));
+        assert_eq!(r.orch.mode(), Mode::Desktop);
+        // No more checks in desktop mode.
+        r.orch.recheck_big_picture();
+        assert!(r.calls().is_empty());
+    }
+
+    #[test]
+    fn big_picture_coming_back_stops_the_rechecks() {
+        let mut r = rig(configured(), Fake::default());
+        r.orch.enter().unwrap();
+        r.orch.platform_mut().bp_verdict = BpVerdict::Unsure;
+        r.orch.on_big_picture_closed();
+        r.orch.platform_mut().bp_verdict = BpVerdict::Back;
+        r.orch.recheck_big_picture();
+        r.calls();
+        r.orch.recheck_big_picture();
+        assert!(r.calls().is_empty());
         assert_eq!(r.orch.mode(), Mode::Gaming);
     }
 
@@ -821,9 +904,9 @@ pub(crate) mod tests {
         assert!(!calls.contains(&"wait_display".to_string()), "{calls:?}");
         assert!(calls.contains(&"start_explorer".to_string()));
         assert_eq!(r.orch.mode(), Mode::Desktop);
-        // The panic command that follows still makes sure Explorer runs.
+        // The panic command that follows still restarts Explorer.
         r.orch.panic_restore();
-        assert_eq!(r.calls(), ["unwatch_big_picture", "start_explorer"]);
+        assert_eq!(r.calls(), ["unwatch_big_picture", "restart_explorer"]);
     }
 
     #[test]
@@ -932,10 +1015,23 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn panic_in_desktop_mode_only_ensures_explorer() {
+    fn panic_in_desktop_mode_restarts_explorer() {
         let mut r = rig(configured(), Fake::default());
         r.orch.panic_restore();
-        assert_eq!(r.calls(), ["unwatch_big_picture", "start_explorer"]);
+        assert_eq!(r.calls(), ["unwatch_big_picture", "restart_explorer"]);
+        assert_eq!(r.orch.mode(), Mode::Desktop);
+    }
+
+    #[test]
+    fn panic_in_gaming_mode_restores_then_restarts_explorer_last() {
+        let mut r = rig(configured(), Fake::default());
+        r.orch.enter().unwrap();
+        r.calls();
+        r.orch.panic_restore();
+        let calls = r.calls();
+        assert!(!calls.contains(&"start_explorer".to_string()), "{calls:?}");
+        assert_eq!(calls.last().map(String::as_str), Some("restart_explorer"));
+        assert!(calls.contains(&"restore_topology".to_string()), "{calls:?}");
         assert_eq!(r.orch.mode(), Mode::Desktop);
     }
 

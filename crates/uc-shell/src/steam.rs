@@ -66,6 +66,52 @@ pub fn launch_args(steam_running: bool, launch_args: &[String]) -> (LaunchMethod
     }
 }
 
+/// Title of the desktop Steam window (not localised).
+pub const MAIN_WINDOW_TITLE: &str = "Steam";
+
+/// What Steam looks like right now, for deciding whether Big Picture was
+/// really left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SteamView {
+    pub steam_running: bool,
+    /// App id from `RunningAppID`, if a game runs.
+    pub game: Option<u32>,
+    pub big_picture_visible: bool,
+    /// A Big Picture window exists but is hidden.
+    pub big_picture_hidden: bool,
+    /// The desktop Steam window is showing.
+    pub main_window_visible: bool,
+}
+
+/// Whether Big Picture was left, after the watcher saw its window go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BpVerdict {
+    /// Big Picture is showing again.
+    #[default]
+    Back,
+    /// A game runs; Big Picture hides behind it and comes back after.
+    GameRunning,
+    /// Clearly left: Steam quit, or it is showing its desktop window.
+    Left,
+    /// No window, no game, no desktop Steam: for example right after a game
+    /// quit, before Big Picture redraws. Not a reason to leave gaming mode.
+    Unsure,
+}
+
+impl SteamView {
+    pub fn verdict(&self) -> BpVerdict {
+        if self.big_picture_visible {
+            BpVerdict::Back
+        } else if self.game.is_some() {
+            BpVerdict::GameRunning
+        } else if !self.steam_running || (self.main_window_visible && !self.big_picture_hidden) {
+            BpVerdict::Left
+        } else {
+            BpVerdict::Unsure
+        }
+    }
+}
+
 /// Steam stores paths in the registry with forward slashes and lowercase
 /// (`c:/program files (x86)/steam/steam.exe`). Windows accepts that, but
 /// backslashes keep logs and comparisons sane.
@@ -92,7 +138,7 @@ mod imp {
     use windows::Win32::UI::WindowsAndMessaging::{SW_SHOW, ShowWindow};
 
     use super::{
-        CLOSE_BIG_PICTURE_URL, LaunchMethod, Nudge, OPEN_BIG_PICTURE_URL, OPEN_MAIN_URL,
+        CLOSE_BIG_PICTURE_URL, LaunchMethod, Nudge, OPEN_BIG_PICTURE_URL, OPEN_MAIN_URL, SteamView,
         launch_args, normalize_registry_path, nudge_due,
     };
     use crate::{Error, Result, WindowInfo, WindowMatcher, win};
@@ -184,6 +230,38 @@ mod imp {
         Ok(true)
     }
 
+    /// Steam's state as seen now; see [`SteamView::verdict`].
+    pub fn view(matcher: &WindowMatcher) -> Result<SteamView> {
+        let pids: Vec<u32> = ["steam.exe", "steamwebhelper.exe"]
+            .iter()
+            .filter_map(|n| win::session_pids_named(n).ok())
+            .flatten()
+            .collect();
+        let windows = win::list_windows()?;
+        let steam_running = !win::session_pids_named("steam.exe")?.is_empty();
+        Ok(SteamView {
+            steam_running,
+            game: running_game(),
+            big_picture_visible: matcher.find(&windows).is_some(),
+            big_picture_hidden: matcher.find_hidden(&windows).is_some(),
+            main_window_visible: windows.iter().any(|w| {
+                w.visible
+                    && pids.contains(&w.pid)
+                    && w.title
+                        .trim()
+                        .eq_ignore_ascii_case(super::MAIN_WINDOW_TITLE)
+            }),
+        })
+    }
+
+    /// Logs Steam's top-level windows (for diagnosing Big Picture closes).
+    pub fn log_windows(why: &str) {
+        match win::list_windows() {
+            Ok(w) => log_steam_windows(&w, why),
+            Err(e) => tracing::warn!("window scan failed: {e}"),
+        }
+    }
+
     /// The Big Picture window, if it is on screen now.
     pub fn find_big_picture(matcher: &WindowMatcher) -> Result<Option<WindowInfo>> {
         Ok(matcher.find(&win::list_windows()?).cloned())
@@ -247,7 +325,10 @@ mod imp {
             }
             let now = Instant::now();
             if now >= deadline {
-                log_steam_windows(&windows);
+                log_steam_windows(
+                    &windows,
+                    "Big Picture never showed up (set [steam] bp_window_title if one of these is Big Picture)",
+                );
                 return Ok(None);
             }
             if let Some(nudge) = nudge_due(now - start, sent) {
@@ -281,7 +362,7 @@ mod imp {
     }
 
     /// Steam's top-level windows, for the log when Big Picture never showed.
-    fn log_steam_windows(windows: &[WindowInfo]) {
+    fn log_steam_windows(windows: &[WindowInfo], why: &str) {
         let pids: Vec<u32> = ["steam.exe", "steamwebhelper.exe"]
             .iter()
             .filter_map(|n| win::session_pids_named(n).ok())
@@ -292,11 +373,7 @@ mod imp {
             .filter(|w| pids.contains(&w.pid) && !w.title.is_empty())
             .map(|w| format!("{:?} {:?} visible={}", w.class, w.title, w.visible))
             .collect();
-        tracing::warn!(
-            steam_pids = ?pids,
-            windows = ?steam_windows,
-            "Big Picture never showed up; Steam's windows (set [steam] bp_window_title if one of these is Big Picture)"
-        );
+        tracing::info!(steam_pids = ?pids, windows = ?steam_windows, "{why}; Steam's windows");
     }
 
     fn spawn(exe: &Path, args: &[String]) -> Result<()> {
@@ -359,6 +436,32 @@ mod tests {
         let (m, args) = launch_args(false, &["-gamepadui".into(), "-silent".into()]);
         assert_eq!(m, LaunchMethod::StartedSteam);
         assert_eq!(args, vec!["-gamepadui".to_owned(), "-silent".to_owned()]);
+    }
+
+    #[test]
+    fn big_picture_verdicts() {
+        let base = SteamView {
+            steam_running: true,
+            ..SteamView::default()
+        };
+        let v = |f: fn(&mut SteamView)| {
+            let mut s = base;
+            f(&mut s);
+            s.verdict()
+        };
+        assert_eq!(v(|s| s.big_picture_visible = true), BpVerdict::Back);
+        assert_eq!(v(|s| s.game = Some(207610)), BpVerdict::GameRunning);
+        assert_eq!(v(|s| s.steam_running = false), BpVerdict::Left);
+        assert_eq!(v(|s| s.main_window_visible = true), BpVerdict::Left);
+        // Nothing to go on (a game just quit): stay.
+        assert_eq!(v(|_| {}), BpVerdict::Unsure);
+        assert_eq!(
+            v(|s| {
+                s.main_window_visible = true;
+                s.big_picture_hidden = true;
+            }),
+            BpVerdict::Unsure
+        );
     }
 
     #[test]

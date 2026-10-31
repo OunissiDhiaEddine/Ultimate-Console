@@ -354,7 +354,8 @@ impl WindowState {
         match action {
             HotkeyAction::GamingToggle => {
                 if self.shared.try_queue_toggle() {
-                    let _ = self.commands.send(Command::Toggle);
+                    let pressed_in = self.shared.mode();
+                    let _ = self.commands.send(Command::Toggle { pressed_in });
                 } else {
                     tracing::info!("a mode change is already queued; ignoring");
                 }
