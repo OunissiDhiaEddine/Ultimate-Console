@@ -104,6 +104,12 @@ pub fn overlay_allowed(mode: Mode, config: &Config) -> bool {
     mode == Mode::Gaming || config.overlay.in_desktop_mode
 }
 
+/// Whether the agent takes over the volume keys: only in gaming mode, where
+/// Explorer (which normally handles them) isn't running.
+pub fn volume_keys_active(mode: Mode, config: &Config) -> bool {
+    mode == Mode::Gaming && config.overlay.volume_keys
+}
+
 pub struct Orchestrator<P: Platform> {
     platform: P,
     config: Config,
@@ -951,5 +957,19 @@ pub(crate) mod tests {
         assert!(!overlay_allowed(Mode::Desktop, &c));
         c.overlay.in_desktop_mode = true;
         assert!(overlay_allowed(Mode::Desktop, &c));
+    }
+
+    #[test]
+    fn volume_keys_only_in_gaming_mode() {
+        let mut c = Config::default();
+        assert!(volume_keys_active(Mode::Gaming, &c));
+        for mode in [Mode::Desktop, Mode::Entering, Mode::Exiting] {
+            assert!(!volume_keys_active(mode, &c), "{mode:?}");
+        }
+        // Even with the overlay allowed on the desktop: Explorer has them there.
+        c.overlay.in_desktop_mode = true;
+        assert!(!volume_keys_active(Mode::Desktop, &c));
+        c.overlay.volume_keys = false;
+        assert!(!volume_keys_active(Mode::Gaming, &c));
     }
 }

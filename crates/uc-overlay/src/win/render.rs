@@ -38,10 +38,11 @@ use windows::Win32::Graphics::Dxgi::{
     DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL, DXGI_USAGE_RENDER_TARGET_OUTPUT,
     IDXGIDevice, IDXGIFactory2, IDXGISurface, IDXGISwapChain1,
 };
-use windows::core::{Interface, Result, w};
+use windows::core::{Interface, PCWSTR, Result, w};
 
 use crate::layout::{Layout, ROW_H, Rect};
 use crate::model::{Confirm, Model, Tab, VolumeRow};
+use crate::osd;
 
 #[derive(Clone, Copy)]
 struct Rgba(f32, f32, f32, f32);
@@ -71,26 +72,30 @@ const DANGER: Rgba = hex(0xFF6B6B, 1.0);
 struct Fonts {
     big: IDWriteTextFormat,
     tab: IDWriteTextFormat,
+    tab_right: IDWriteTextFormat,
     body: IDWriteTextFormat,
     body_right: IDWriteTextFormat,
     body_center: IDWriteTextFormat,
     small: IDWriteTextFormat,
     small_right: IDWriteTextFormat,
+    /// Segoe MDL2 Assets glyphs, for the volume popup's speaker icon.
+    icon: IDWriteTextFormat,
 }
 
 impl Fonts {
     fn new() -> Result<Self> {
         // SAFETY: plain factory creation.
         let dw: IDWriteFactory = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
-        let make = |size: f32,
-                    weight: DWRITE_FONT_WEIGHT,
-                    align: DWRITE_TEXT_ALIGNMENT|
+        let make_in = |family: PCWSTR,
+                       size: f32,
+                       weight: DWRITE_FONT_WEIGHT,
+                       align: DWRITE_TEXT_ALIGNMENT|
          -> Result<IDWriteTextFormat> {
             // SAFETY: the font name and locale are static wide strings; the
             // format and trimming sign are owned COM objects.
             unsafe {
                 let f = dw.CreateTextFormat(
-                    w!("Segoe UI"),
+                    family,
                     None,
                     weight,
                     DWRITE_FONT_STYLE_NORMAL,
@@ -111,6 +116,7 @@ impl Fonts {
                 Ok(f)
             }
         };
+        let make = |size, weight, align| make_in(w!("Segoe UI"), size, weight, align);
         let (n, sb) = (DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD);
         let (l, r, c) = (
             DWRITE_TEXT_ALIGNMENT_LEADING,
@@ -120,11 +126,13 @@ impl Fonts {
         Ok(Self {
             big: make(30.0, sb, l)?,
             tab: make(21.0, sb, l)?,
+            tab_right: make(21.0, sb, r)?,
             body: make(17.0, n, l)?,
             body_right: make(17.0, n, r)?,
             body_center: make(17.0, n, c)?,
             small: make(14.0, n, l)?,
             small_right: make(14.0, n, r)?,
+            icon: make_in(w!("Segoe MDL2 Assets"), 26.0, n, c)?,
         })
     }
 }
@@ -312,6 +320,56 @@ impl Gfx {
         unsafe {
             self.dc.EndDraw(None, None)?;
             self.swapchain.Present(1, DXGI_PRESENT(0)).ok()
+        }
+    }
+
+    /// Draw the volume popup (its own small window) and present it.
+    pub fn draw_osd(&self, view: &osd::View, parts: &osd::Parts) -> Result<()> {
+        // SAFETY: live COM objects; BeginDraw/EndDraw bracket every draw call.
+        unsafe {
+            self.dc.BeginDraw();
+            self.dc.Clear(Some(&color(Rgba(0.0, 0.0, 0.0, 0.0))));
+        }
+        self.osd_scene(view, parts);
+        // SAFETY: as above.
+        unsafe {
+            self.dc.EndDraw(None, None)?;
+            self.swapchain.Present(1, DXGI_PRESENT(0)).ok()
+        }
+    }
+
+    fn osd_scene(&self, view: &osd::View, p: &osd::Parts) {
+        let f = &self.fonts;
+        let radius = 14.0;
+        self.fill(p.card, radius, CARD);
+        self.stroke(p.card.inset(0.5), radius, CARD_EDGE, 1.0);
+        match view {
+            osd::View::Level { level, muted } => {
+                let level = level.clamp(0.0, 1.0);
+                // Segoe MDL2 Assets: Mute, Volume0..Volume3.
+                let glyph = match (*muted, level) {
+                    (true, _) => "\u{E74F}",
+                    (_, l) if l <= 0.0 => "\u{E992}",
+                    (_, l) if l < 0.34 => "\u{E993}",
+                    (_, l) if l < 0.67 => "\u{E994}",
+                    _ => "\u{E995}",
+                };
+                self.text(glyph, &f.icon, p.icon, if *muted { DIM } else { TEXT });
+                self.fill(p.track, 4.0, TRACK);
+                let fill = Rect::new(p.track.x, p.track.y, p.track.w * level, p.track.h);
+                self.fill(fill, 4.0, if *muted { MUTED } else { ACCENT });
+                self.text(
+                    &view.value_text(),
+                    if *muted { &f.body_right } else { &f.tab_right },
+                    p.value,
+                    if *muted { DIM } else { TEXT },
+                );
+            }
+            osd::View::Unavailable(reason) => {
+                self.text("\u{E74F}", &f.icon, p.icon, DIM);
+                let r = Rect::new(p.track.x, 0.0, p.card.w - p.track.x - 16.0, p.card.h);
+                self.text(&format!("Audio unavailable: {reason}"), &f.small, r, DIM);
+            }
         }
     }
 

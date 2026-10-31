@@ -254,6 +254,9 @@ pub struct Overlay {
     pub in_desktop_mode: bool,
     /// Resource sampling interval while the overlay is open.
     pub sample_interval_ms: u32,
+    /// In gaming mode, handle the keyboard / headset volume keys (Explorer,
+    /// which normally does, isn't running) and show a volume popup.
+    pub volume_keys: bool,
 }
 
 impl Default for Overlay {
@@ -261,6 +264,7 @@ impl Default for Overlay {
         Self {
             in_desktop_mode: false,
             sample_interval_ms: 1000,
+            volume_keys: true,
         }
     }
 }

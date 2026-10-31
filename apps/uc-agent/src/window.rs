@@ -1,5 +1,6 @@
 //! The agent's hidden window on the main thread (plan §3): global hotkeys,
-//! suspend/resume notifications, and the overlay hotkey.
+//! suspend/resume notifications, the overlay hotkey, and in gaming mode the
+//! media volume keys (Explorer normally handles those, and it isn't running).
 //!
 //! It is a hidden top-level window rather than a message-only one, like
 //! `uc-power`'s, because message-only windows miss some power broadcasts.
@@ -18,6 +19,7 @@ use std::time::{Duration, Instant};
 use uc_core::config::Hotkeys;
 use uc_core::hotkey::Hotkey;
 use uc_core::ipc::{HotkeyAction, TvPowerState};
+use uc_overlay::VolumeKey;
 use uc_power::{EventFilter, PowerEvent, Registration};
 use windows::Win32::Foundation::{
     ERROR_CLASS_ALREADY_EXISTS, ERROR_HOTKEY_ALREADY_REGISTERED, GetLastError, HWND, LPARAM,
@@ -47,8 +49,17 @@ const CLASS_NAME: PCWSTR = w!("UltimateConsole.Agent");
 const WM_APP_APPLY_HOTKEYS: u32 = WM_APP + 1;
 /// lparam: `*mut ProbeRequest`.
 const WM_APP_PROBE_HOTKEY: u32 = WM_APP + 2;
+/// wparam: 1 to take the volume keys, 0 to give them back.
+const WM_APP_VOLUME_KEYS: u32 = WM_APP + 3;
 /// Temporary id for probing whether a shortcut can be registered.
 const PROBE_ID: i32 = 100;
+/// Hotkey ids of the volume keys: this plus the index in [`VolumeKey::ALL`].
+const VOLUME_KEY_ID: i32 = 10;
+
+fn volume_key_from_id(id: i32) -> Option<VolumeKey> {
+    let i = usize::try_from(id.checked_sub(VOLUME_KEY_ID)?).ok()?;
+    VolumeKey::ALL.get(i).copied()
+}
 
 struct ApplyRequest {
     hotkeys: Hotkeys,
@@ -68,6 +79,8 @@ struct WindowState {
     overlay: Arc<OverlayHost>,
     /// What is registered now, per action (index as in [`ACTIONS`]).
     registered: [Option<Hotkey>; 3],
+    /// The volume keys are registered (gaming mode).
+    volume_keys: bool,
     filter: EventFilter,
 }
 
@@ -101,6 +114,7 @@ impl Window {
             commands,
             overlay,
             registered: [None; 3],
+            volume_keys: false,
             filter: EventFilter::new(),
         }));
         // SAFETY: standard class registration and window creation; the class
@@ -231,6 +245,20 @@ impl WindowHandle {
         req.error
     }
 
+    /// Takes over the volume keys (`true`, gaming mode) or gives them back
+    /// to Windows (`false`). Cheap to repeat.
+    pub fn set_volume_keys(self, on: bool) {
+        // SAFETY: as in `apply_hotkeys`; nothing is passed by pointer.
+        unsafe {
+            SendMessageW(
+                self.hwnd(),
+                WM_APP_VOLUME_KEYS,
+                Some(WPARAM(usize::from(on))),
+                None,
+            )
+        };
+    }
+
     /// Ends the message loop, which ends the agent.
     pub fn close(self) {
         // SAFETY: posting to our own window; fails harmlessly if it is gone.
@@ -253,6 +281,25 @@ fn register(hwnd: HWND, id: i32, hotkey: Hotkey) -> Result<(), String> {
 fn unregister(hwnd: HWND, id: i32) {
     // SAFETY: plain FFI call on our own window.
     let _ = unsafe { UnregisterHotKey(Some(hwnd), id) };
+}
+
+/// Registers or unregisters the bare volume keys. No `MOD_NOREPEAT`: holding
+/// a key keeps changing the volume, like Windows does.
+fn set_volume_keys(hwnd: HWND, on: bool) {
+    for (i, key) in VolumeKey::ALL.into_iter().enumerate() {
+        let id = VOLUME_KEY_ID + i as i32;
+        if !on {
+            unregister(hwnd, id);
+            continue;
+        }
+        // SAFETY: plain FFI call on our own window.
+        if let Err(e) =
+            unsafe { RegisterHotKey(Some(hwnd), id, HOT_KEY_MODIFIERS(0), u32::from(key.vk())) }
+        {
+            tracing::warn!(?key, "could not take the volume key: {e}");
+        }
+    }
+    tracing::info!(on, "volume keys handled by the agent");
 }
 
 impl WindowState {
@@ -388,8 +435,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
     // A panic must not unwind into Windows (it would abort the process).
     let result = catch_unwind(AssertUnwindSafe(|| match msg {
         WM_HOTKEY => {
-            if let Some(action) = hotkeys::from_id(wparam.0 as i32) {
+            let id = wparam.0 as i32;
+            if let Some(action) = hotkeys::from_id(id) {
                 state.on_hotkey(action);
+            } else if let Some(key) = volume_key_from_id(id) {
+                state.overlay.volume_key(key);
             }
             Some(LRESULT(0))
         }
@@ -415,6 +465,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
             Some(LRESULT(0))
         }
+        WM_APP_VOLUME_KEYS => {
+            let on = wparam.0 != 0;
+            if on != state.volume_keys {
+                set_volume_keys(hwnd, on);
+                state.volume_keys = on;
+            }
+            Some(LRESULT(0))
+        }
         WM_CLOSE => {
             // SAFETY: destroying our own window from its own thread.
             let _ = unsafe { DestroyWindow(hwnd) };
@@ -424,6 +482,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             for action in ACTIONS {
                 unregister(hwnd, hotkeys::id(action));
             }
+            set_volume_keys(hwnd, false);
             // SAFETY: ends this thread's message loop.
             unsafe { PostQuitMessage(0) };
             Some(LRESULT(0))

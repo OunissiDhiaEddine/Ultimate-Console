@@ -22,6 +22,11 @@ pub struct OverlayArgs {
     /// Don't open the overlay at start, wait for the hotkey.
     #[arg(long)]
     hidden: bool,
+    /// Also take the media volume keys (as the agent does in gaming mode):
+    /// they change the volume and show the volume popup. While this runs,
+    /// Windows' own volume flyout won't appear.
+    #[arg(long)]
+    volume_keys: bool,
     /// Quit after this many seconds (default: run until Ctrl+C).
     #[arg(long)]
     seconds: Option<u64>,
@@ -49,10 +54,18 @@ pub fn run(args: OverlayArgs) -> Result<ExitCode, Box<dyn std::error::Error>> {
     };
     let overlay = Overlay::start_with(Settings::from(&config), backends)?;
     println!("overlay running; {hotkey} toggles it, Ctrl+C quits");
+    if args.volume_keys {
+        println!("volume keys show the volume popup");
+    }
     if !args.hidden {
         overlay.show();
     }
-    hotkey_loop(&overlay, hotkey, args.seconds.map(Duration::from_secs))?;
+    hotkey_loop(
+        &overlay,
+        hotkey,
+        args.volume_keys,
+        args.seconds.map(Duration::from_secs),
+    )?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -93,8 +106,10 @@ fn fake_backends() -> Backends {
 fn hotkey_loop(
     overlay: &Overlay,
     hotkey: Hotkey,
+    volume_keys: bool,
     limit: Option<Duration>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use uc_overlay::VolumeKey;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         HOT_KEY_MODIFIERS, MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey,
     };
@@ -106,6 +121,21 @@ fn hotkey_loop(
     // SAFETY: thread hotkey (no window); unregistered below.
     unsafe { RegisterHotKey(None, 1, mods, u32::from(hotkey.key.vk())) }
         .map_err(|e| format!("RegisterHotKey({hotkey}) failed, is it in use? {e}"))?;
+    if volume_keys {
+        for key in VolumeKey::ALL {
+            // SAFETY: thread hotkey (no window), id = the key code; unregistered below.
+            if let Err(e) = unsafe {
+                RegisterHotKey(
+                    None,
+                    i32::from(key.vk()),
+                    HOT_KEY_MODIFIERS(0),
+                    u32::from(key.vk()),
+                )
+            } {
+                eprintln!("could not take {key:?}: {e}");
+            }
+        }
+    }
     if let Some(d) = limit {
         let ms = d.as_millis().min(u128::from(u32::MAX)) as u32;
         // SAFETY: thread timer (no window); it ends the loop below.
@@ -115,13 +145,21 @@ fn hotkey_loop(
     // SAFETY: message loop on this thread; `msg` outlives each call.
     while unsafe { GetMessageW(&mut msg, None, 0, 0) }.as_bool() {
         match msg.message {
-            WM_HOTKEY => overlay.toggle(),
+            WM_HOTKEY => match VolumeKey::from_raw(msg.wParam.0) {
+                Some(key) => overlay.volume_key(key),
+                None => overlay.toggle(),
+            },
             WM_TIMER => break,
             _ => {}
         }
     }
-    // SAFETY: undoes the registration above.
-    let _ = unsafe { UnregisterHotKey(None, 1) };
+    // SAFETY: undoes the registrations above.
+    unsafe {
+        let _ = UnregisterHotKey(None, 1);
+        for key in VolumeKey::ALL {
+            let _ = UnregisterHotKey(None, i32::from(key.vk()));
+        }
+    }
     Ok(())
 }
 
@@ -129,6 +167,7 @@ fn hotkey_loop(
 fn hotkey_loop(
     _overlay: &Overlay,
     _hotkey: Hotkey,
+    _volume_keys: bool,
     _limit: Option<Duration>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     Err("the overlay probe only runs on Windows".into())

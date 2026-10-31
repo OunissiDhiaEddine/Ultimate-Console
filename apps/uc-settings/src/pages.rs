@@ -129,6 +129,16 @@ impl App {
             &mut d.overlay.sample_interval_ms,
             10_000,
         );
+        ui.add_space(6.0);
+        ui.checkbox(
+            &mut d.overlay.volume_keys,
+            "Volume keys show a volume popup in gaming mode",
+        );
+        hint(
+            ui,
+            "Keyboard and headset volume buttons change the volume and show the level \
+             for two seconds. Windows can't do this in gaming mode because Explorer is closed.",
+        );
 
         section(ui, "Logging");
         ui.horizontal(|ui| {
