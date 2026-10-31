@@ -1,3 +1,5 @@
+<p align="center"><img src="packaging/brand/logo.svg" alt="Ultimate Console logo" width="96" height="96"></p>
+
 # Ultimate Console
 
 A lightweight Windows background agent that turns the PC into a couch console,
