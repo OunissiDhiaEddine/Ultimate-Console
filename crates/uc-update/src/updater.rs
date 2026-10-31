@@ -1,4 +1,4 @@
-//! Updates from this repo's private GitHub Releases (plan §2.12, WP-10).
+//! Updates from this repo's public GitHub Releases (plan §2.12, WP-10).
 //!
 //! The agent owns the [`Updater`] and the policy: check daily (and on
 //! "Check now" from the settings app), download in the background, and call
@@ -36,14 +36,13 @@ pub struct Updater {
 }
 
 impl Updater {
-    /// `repo` is `config.updates.repo` (`"owner/name"`); `token` is the
-    /// decrypted [`crate::TokenStore`] token. Without a token a private repo
-    /// can't be read, so callers should report [`UpdateStatus::TokenNeeded`]
-    /// instead of calling this.
+    /// `repo` is `config.updates.repo` (`"owner/name"`). The repo is public,
+    /// so no token: GitHub allows 60 unauthenticated API calls an hour per
+    /// IP, far more than a daily check needs.
     ///
     /// Fails with [`Error::NotInstalled`] in a dev or CI build.
-    pub fn new(repo: &str, token: Option<String>) -> Result<Self> {
-        let source = GithubSource::new(&repo_url(repo)?, token, false);
+    pub fn new(repo: &str) -> Result<Self> {
+        let source = GithubSource::new(&repo_url(repo)?, None, false);
         let manager = UpdateManager::new(source, None, None).map_err(|e| match e {
             velopack::Error::NotInstalled(_) => Error::NotInstalled,
             other => Error::Velopack(other),
@@ -142,10 +141,7 @@ mod tests {
 
     #[test]
     fn not_installed_in_tests() {
-        assert!(matches!(
-            Updater::new("a/b", None),
-            Err(Error::NotInstalled)
-        ));
+        assert!(matches!(Updater::new("a/b"), Err(Error::NotInstalled)));
     }
 
     #[test]

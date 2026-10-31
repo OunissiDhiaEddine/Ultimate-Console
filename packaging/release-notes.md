@@ -6,8 +6,9 @@
    choose *More info → Run anyway*.
 2. The settings app opens and the background agent starts (and from now on
    starts at every logon). Set up your TV display and the IRIS TV there.
-3. For automatic updates, paste a GitHub fine-grained token (this repo only,
-   *Contents: read-only*) on the *About / Updates* page.
+3. Updates are automatic: checked daily (or *Check now* on the *About /
+   Updates* page) and installed the next time you're in desktop mode, never
+   during a game.
 
 Hotkeys (change them in settings): **Ctrl+Alt+G** gaming mode,
 **Ctrl+Alt+O** overlay, **Ctrl+Alt+Shift+R** panic restore.

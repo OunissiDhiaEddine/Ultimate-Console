@@ -122,7 +122,7 @@ fn run(restarted: bool) -> Result<(), String> {
     }
     shared.sync_tv_status(&config);
 
-    let updates = updates::Updates::new(shared.clone(), &paths);
+    let updates = updates::Updates::new(shared.clone());
     let (commands, inbox) = mpsc::channel();
     let overlay = Arc::new(OverlayHost::start(&config));
     let window = Window::create(

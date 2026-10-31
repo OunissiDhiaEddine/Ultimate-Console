@@ -13,8 +13,6 @@ use uc_core::{Config, Mode};
 use crate::app::{App, HOTKEY_ACTIONS, Page, hotkey_mut, hotkey_of};
 use crate::system;
 
-const TOKEN_URL: &str = "https://github.com/settings/personal-access-tokens/new";
-
 fn is_busy(pending: &HashSet<Discriminant<IpcRequest>>, request: &IpcRequest) -> bool {
     pending.contains(&std::mem::discriminant(request))
 }
@@ -738,57 +736,14 @@ impl App {
                 Some(UpdateStatus::Available { version }) => {
                     ui.label(format!("Version {version} is available."));
                 }
-                Some(UpdateStatus::TokenNeeded) => {
-                    ui.colored_label(ui.visuals().warn_fg_color, "Update token needed (below).");
-                }
                 Some(UpdateStatus::Failed { message }) => {
                     ui.colored_label(
                         ui.visuals().error_fg_color,
                         format!("Check failed: {message}"),
                     );
                 }
-                None => {}
-            }
-        });
-
-        section(ui, "GitHub token for updates");
-        let token_set = self.status.as_ref().map(|s| s.update_token_set);
-        ui.label(match token_set {
-            Some(true) => "A token is saved.",
-            Some(false) => "No token saved: updates can't be downloaded from the private repo.",
-            None => "",
-        });
-        hint(
-            ui,
-            "Create a fine-grained token with access to only the Ultimate-Console repo and \
-             Contents: Read-only. It is stored encrypted for your Windows account.",
-        );
-        ui.hyperlink_to("Create a token on GitHub", TOKEN_URL);
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.token_input)
-                    .password(true)
-                    .hint_text("github_pat_…")
-                    .desired_width(300.0),
-            );
-            let token = self.token_input.trim().to_string();
-            if ui
-                .add_enabled(
-                    connected && !token.is_empty(),
-                    egui::Button::new("Save token"),
-                )
-                .clicked()
-            {
-                self.outbox.push(IpcRequest::SetUpdateToken { token });
-            }
-            if ui
-                .add_enabled(
-                    connected && token_set == Some(true),
-                    egui::Button::new("Remove"),
-                )
-                .clicked()
-            {
-                self.outbox.push(IpcRequest::ClearUpdateToken);
+                // From an agent older than 0.1.1, which still wanted a token.
+                Some(UpdateStatus::TokenNeeded) | None => {}
             }
         });
 

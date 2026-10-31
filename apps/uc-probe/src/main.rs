@@ -71,7 +71,7 @@ enum Command {
     Power(power::PowerCmd),
     /// Android TV: discover, pair, wake, sleep, state (WP-02).
     Tv(tv::TvArgs),
-    /// Update token, autostart value and update check (WP-10).
+    /// Autostart value and update check (WP-10).
     #[command(subcommand)]
     Update(update::UpdateCmd),
     /// Show the overlay on the desktop, toggled by its hotkey (WP-07).

@@ -8,7 +8,7 @@ The app ships as a [Velopack](https://velopack.io) package (plan §2.12, WP-10).
 | Install folder | `%LOCALAPPDATA%\UltimateConsole` (per user, no admin) |
 | Main exe | `uc-settings.exe` (Start-menu shortcut, runs the install/uninstall hooks) |
 | Also shipped | `uc-agent.exe`, `uc-probe.exe`, `README.md`, `LICENSE` in `current\` |
-| Updates | GitHub Releases of this private repo, read with Dhia's token |
+| Updates | GitHub Releases of this repo (public, no token) |
 | Files here | `icon.ico` (installer and shortcut icon), `release-notes.md` (shown on the release and in the package) |
 
 ## Making a release
@@ -29,7 +29,7 @@ The `vpk` version in `release.yml` must match the `velopack` crate version in
 
 ## Install, update and uninstall flow
 
-Code: `crates/uc-update` (`lifecycle`, `updater`, `token`, `autostart`,
+Code: `crates/uc-update` (`lifecycle`, `updater`, `autostart`,
 `uninstall`).
 
 - **Install:** Velopack runs `uc-settings.exe --veloapp-install`, which writes
