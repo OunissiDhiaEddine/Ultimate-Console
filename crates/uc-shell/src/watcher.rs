@@ -251,7 +251,16 @@ fn scan() {
         };
         let Some(ctx) = c.as_mut() else { return };
         let found = match win::list_windows() {
-            Ok(list) => ctx.matcher.find(&list).cloned(),
+            Ok(list) => ctx.matcher.find(&list).cloned().or_else(|| {
+                let last = ctx.tracker.last_known()?;
+                let w = ctx
+                    .matcher
+                    .follow(last, &list, crate::steam::MAIN_WINDOW_TITLE)?;
+                if w.title != last.title {
+                    tracing::info!(hwnd = w.hwnd, title = %w.title, "Big Picture window retitled; still tracking it");
+                }
+                Some(w.clone())
+            }),
             Err(e) => {
                 tracing::warn!("window scan failed: {e}");
                 return;

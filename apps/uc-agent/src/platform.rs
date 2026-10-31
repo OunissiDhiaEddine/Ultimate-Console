@@ -88,6 +88,9 @@ pub struct RealPlatform {
     /// Created on first use: COM objects stay on the thread that made them.
     audio: Option<CoreAudio>,
     watcher: Option<BigPictureWatcher>,
+    /// Desktop Steam windows already showing when gaming mode started; they
+    /// are no sign that Big Picture was left.
+    main_at_entry: Vec<isize>,
     wake: Option<JoinHandle<Step>>,
 }
 
@@ -99,6 +102,7 @@ impl RealPlatform {
             commands,
             audio: None,
             watcher: None,
+            main_at_entry: Vec::new(),
             wake: None,
         }
     }
@@ -241,11 +245,12 @@ impl Platform for RealPlatform {
         let matcher = WindowMatcher::from_config(steam);
         let deadline = std::time::Instant::now() + grace;
         loop {
-            let verdict = match steam::view(&matcher) {
+            let verdict = match steam::view(&matcher, &self.main_at_entry) {
                 Ok(view) => {
                     let v = view.verdict();
                     if v != BpVerdict::Back && grace > Duration::ZERO {
                         tracing::info!(?view, ?v, "Big Picture window gone");
+                        steam::log_windows("Big Picture window gone");
                     }
                     v
                 }
@@ -255,9 +260,6 @@ impl Platform for RealPlatform {
                 }
             };
             if verdict != BpVerdict::Unsure || std::time::Instant::now() >= deadline {
-                if verdict == BpVerdict::Unsure && grace > Duration::ZERO {
-                    steam::log_windows("Big Picture gone, unclear why; staying in gaming mode");
-                }
                 return verdict;
             }
             std::thread::sleep(Duration::from_millis(500));
@@ -278,6 +280,8 @@ impl Platform for RealPlatform {
 
     fn watch_big_picture(&mut self, steam: &Steam) -> Step {
         self.unwatch_big_picture();
+        self.main_at_entry = steam::main_windows();
+        tracing::info!(main_windows = ?self.main_at_entry, "desktop Steam windows at gaming mode start");
         let commands = self.commands.clone();
         let watcher = BigPictureWatcher::start(
             WindowMatcher::from_config(steam),

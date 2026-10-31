@@ -61,6 +61,26 @@ impl WindowMatcher {
             && field_matches(&self.title, &window.title)
     }
 
+    /// Follows a Big Picture window seen before (`last`) by its handle, for
+    /// when Steam retitles it for a moment: the same `HWND` and process,
+    /// still visible and of the right class, counts as Big Picture. Except
+    /// when it is now titled like the desktop Steam window (`main_title`):
+    /// that is Steam leaving Big Picture in place.
+    pub fn follow<'a>(
+        &self,
+        last: &WindowInfo,
+        windows: impl IntoIterator<Item = &'a WindowInfo>,
+        main_title: &str,
+    ) -> Option<&'a WindowInfo> {
+        windows.into_iter().find(|w| {
+            w.hwnd == last.hwnd
+                && w.pid == last.pid
+                && w.visible
+                && self.class_matches(&w.class)
+                && !w.title.trim().eq_ignore_ascii_case(main_title.trim())
+        })
+    }
+
     /// The first window that would match if it were visible, but is hidden.
     pub fn find_hidden<'a>(
         &self,
@@ -125,6 +145,27 @@ mod tests {
         assert_eq!(m.find_hidden(&list).map(|w| w.hwnd), Some(7));
         let visible = [win("SDL_app", "Steam Big Picture Mode", true)];
         assert_eq!(m.find_hidden(&visible), None);
+    }
+
+    #[test]
+    fn big_picture_is_followed_by_handle_through_a_retitle() {
+        let m = WindowMatcher::from_config(&Steam::default());
+        let last = win("SDL_app", "Steam Big Picture Mode", true);
+        let retitled = [win("SDL_app", "Steam Keyboard", true)];
+        assert_eq!(m.find(&retitled), None);
+        assert!(m.follow(&last, &retitled, "Steam").is_some());
+        // Turned into the desktop Steam window, hidden, or another process.
+        assert!(
+            m.follow(&last, &[win("SDL_app", "Steam", true)], "Steam")
+                .is_none()
+        );
+        assert!(
+            m.follow(&last, &[win("SDL_app", "x", false)], "Steam")
+                .is_none()
+        );
+        let mut other = win("SDL_app", "x", true);
+        other.pid = 99;
+        assert!(m.follow(&last, &[other], "Steam").is_none());
     }
 
     #[test]
