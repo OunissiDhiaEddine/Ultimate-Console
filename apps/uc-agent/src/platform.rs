@@ -230,6 +230,24 @@ impl Platform for RealPlatform {
         find_window(steam).is_some()
     }
 
+    fn big_picture_gone(&mut self, steam: &Steam, grace: Duration) -> bool {
+        let deadline = std::time::Instant::now() + grace;
+        loop {
+            if let Some(app) = steam::running_game() {
+                tracing::info!(app, "Big Picture window gone but a Steam game is running");
+                return false;
+            }
+            if find_window(steam).is_some() {
+                tracing::info!("Big Picture window came back");
+                return false;
+            }
+            if std::time::Instant::now() >= deadline {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+
     fn focus_big_picture(&mut self, steam: &Steam) {
         if let Some(hwnd) = find_window(steam) {
             focus(hwnd);

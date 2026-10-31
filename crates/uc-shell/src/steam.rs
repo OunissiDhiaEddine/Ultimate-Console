@@ -83,7 +83,9 @@ mod imp {
     use std::time::{Duration, Instant};
 
     use uc_core::config::Steam;
-    use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
+    use windows::Win32::System::Registry::{
+        HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegGetValueW,
+    };
     use windows::core::{HSTRING, PCWSTR};
 
     use windows::Win32::Foundation::HWND;
@@ -128,6 +130,29 @@ mod imp {
                 let tried: Vec<_> = candidates.iter().map(|p| p.display().to_string()).collect();
                 Error::SteamNotFound(format!("tried: {}", tried.join(", ")))
             })
+    }
+
+    /// The app id of the game Steam is running now (`HKCU\Software\Valve\
+    /// Steam\RunningAppID`), or `None` when no game runs.
+    pub fn running_game() -> Option<u32> {
+        let key = HSTRING::from(STEAM_KEY);
+        let value = HSTRING::from("RunningAppID");
+        let mut data = 0u32;
+        let mut bytes = size_of::<u32>() as u32;
+        // SAFETY: `data` is writable for `bytes` bytes; the strings are
+        // NUL-terminated HSTRINGs that outlive the call.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                PCWSTR(key.as_ptr()),
+                PCWSTR(value.as_ptr()),
+                RRF_RT_REG_DWORD,
+                None,
+                Some((&mut data as *mut u32).cast()),
+                Some(&mut bytes),
+            )
+        };
+        (status.is_ok() && data != 0).then_some(data)
     }
 
     /// Whether `steam.exe` runs in this session.

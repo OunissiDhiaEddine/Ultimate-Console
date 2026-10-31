@@ -28,6 +28,14 @@ const STRAGGLER_GRACE: Duration = Duration::from_secs(1);
 /// When `explorer.exe` processes exist but no taskbar yet, how long to wait
 /// for one of them to become the shell before launching another.
 const STARTING_SHELL_GRACE: Duration = Duration::from_secs(3);
+/// How often the exit message is posted again while the taskbar is still up.
+/// A shell that only just started (e.g. we relaunched it a few seconds ago)
+/// can ignore the first one.
+const REPOST_EVERY: Duration = Duration::from_millis(1500);
+/// Once the taskbar is gone, how long the shell process gets to end before
+/// we move on anyway. It can take several more seconds to save its state;
+/// it is left to finish on its own (never killed, see the module docs).
+const SHELL_LINGER: Duration = Duration::from_secs(2);
 
 /// What [`exit_explorer`] did.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -93,18 +101,41 @@ pub fn exit_explorer(timeout: Duration) -> Result<ExitReport> {
         let window = win::window_info(hwnd);
         report.shell_pid = Some(window.pid);
         tracing::info!(shell_pid = window.pid, "asking Explorer to exit");
-        // SAFETY: plain FFI call; a stale handle just fails.
-        unsafe { PostMessageW(Some(hwnd), WM_EXIT_EXPLORER, WPARAM(0), LPARAM(0)) }
-            .map_err(|e| Error::win32("PostMessage(Shell_TrayWnd, 0x5B4)", e))?;
+        post_exit(hwnd)?;
+        let mut last_post = Instant::now();
+        let mut posts = 1u32;
 
         let shell_pid = window.pid;
+        let mut tray_gone_at: Option<Instant> = None;
         loop {
-            let shell_gone = tray().is_none() && !explorer_pids()?.contains(&shell_pid);
-            if shell_gone {
-                break;
+            let now = Instant::now();
+            match tray() {
+                Some(hwnd) => {
+                    tray_gone_at = None;
+                    if now.duration_since(last_post) >= REPOST_EVERY {
+                        tracing::info!(posts, "taskbar still up; asking Explorer again");
+                        // A failed re-post is retried on the next round.
+                        let _ = post_exit(hwnd);
+                        last_post = now;
+                        posts += 1;
+                    }
+                }
+                None => {
+                    let since = *tray_gone_at.get_or_insert(now);
+                    if !explorer_pids()?.contains(&shell_pid) {
+                        break;
+                    }
+                    if now.duration_since(since) >= SHELL_LINGER {
+                        tracing::info!(
+                            shell_pid,
+                            "taskbar gone; the shell process is still finishing, moving on"
+                        );
+                        break;
+                    }
+                }
             }
-            if Instant::now() >= deadline {
-                tracing::warn!(?timeout, "Explorer did not exit in time");
+            if now >= deadline {
+                tracing::warn!(?timeout, posts, "Explorer did not exit in time");
                 return Err(Error::ExplorerExitTimeout(timeout));
             }
             std::thread::sleep(POLL);
@@ -116,11 +147,18 @@ pub fn exit_explorer(timeout: Duration) -> Result<ExitReport> {
     }
 
     // Folder windows opened "in a separate process" survive the shell's exit.
+    // The old shell process may still be finishing; it is never killed.
+    let others = || -> Result<Vec<u32>> {
+        Ok(explorer_pids()?
+            .into_iter()
+            .filter(|p| Some(*p) != report.shell_pid)
+            .collect())
+    };
     let grace_end = Instant::now() + STRAGGLER_GRACE;
-    let mut left = explorer_pids()?;
+    let mut left = others()?;
     while !left.is_empty() && Instant::now() < grace_end {
         std::thread::sleep(POLL);
-        left = explorer_pids()?;
+        left = others()?;
     }
     for pid in left {
         match win::terminate(pid) {
@@ -134,6 +172,12 @@ pub fn exit_explorer(timeout: Duration) -> Result<ExitReport> {
     report.elapsed = start.elapsed();
     tracing::info!(?report, "Explorer exited");
     Ok(report)
+}
+
+fn post_exit(hwnd: HWND) -> Result<()> {
+    // SAFETY: plain FFI call; a stale handle just fails.
+    unsafe { PostMessageW(Some(hwnd), WM_EXIT_EXPLORER, WPARAM(0), LPARAM(0)) }
+        .map_err(|e| Error::win32("PostMessage(Shell_TrayWnd, 0x5B4)", e))
 }
 
 /// Starts the Explorer shell if it isn't running and waits up to `wait` for
