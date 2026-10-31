@@ -217,8 +217,9 @@ impl Platform for RealPlatform {
     }
 
     fn wait_big_picture(&mut self, steam: &Steam, timeout: Duration) -> Step<bool> {
-        let found = steam::wait_for_big_picture(&WindowMatcher::from_config(steam), timeout)
-            .map_err(|e| e.to_string())?;
+        let found =
+            steam::wait_for_big_picture_nudging(steam, &WindowMatcher::from_config(steam), timeout)
+                .map_err(|e| e.to_string())?;
         if let Some(w) = &found {
             focus(HWND(w.hwnd as *mut _));
         }
