@@ -1,4 +1,4 @@
-//! Updates from the private GitHub Releases (WP-10, plan §2.12).
+//! Updates from this repo's public GitHub Releases (WP-10, plan §2.12).
 //!
 //! - `CheckForUpdates` from the settings app checks right away; with
 //!   `updates.auto_check` the orchestrator's tick also checks a minute after
@@ -13,10 +13,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use uc_core::Paths;
 use uc_core::ipc::{ErrorCode, IpcEvent, IpcResponse, UpdateStatus};
 use uc_core::state::Mode;
-use uc_update::{Error, TokenStore, Updater, updater};
+use uc_update::{Error, Updater, updater};
 
 use crate::shared::{Shared, lock};
 
@@ -27,7 +26,6 @@ const RETRY_AFTER: Duration = Duration::from_secs(60 * 60);
 
 pub struct Updates {
     shared: Arc<Shared>,
-    token: TokenStore,
     /// When the next automatic check is due.
     next_check: Mutex<Instant>,
     /// A check (and download) is running.
@@ -37,42 +35,20 @@ pub struct Updates {
 }
 
 impl Updates {
-    pub fn new(shared: Arc<Shared>, paths: &Paths) -> Arc<Self> {
+    pub fn new(shared: Arc<Shared>) -> Arc<Self> {
         let updates = Arc::new(Self {
             shared,
-            token: TokenStore::for_paths(paths),
             next_check: Mutex::new(Instant::now() + FIRST_CHECK_AFTER),
             busy: AtomicBool::new(false),
             ready: AtomicBool::new(false),
         });
         // Downloaded by an earlier run but not applied yet.
-        if let Ok(u) = Updater::new(&updates.shared.config().updates.repo, None)
+        if let Ok(u) = Updater::new(&updates.shared.config().updates.repo)
             && u.downloaded().is_some()
         {
             updates.ready.store(true, Ordering::SeqCst);
         }
         updates
-    }
-
-    pub fn token_set(&self) -> bool {
-        self.token.is_set()
-    }
-
-    pub fn set_token(&self, token: &str) -> IpcResponse {
-        match self.token.save(token) {
-            Ok(()) => IpcResponse::Ok,
-            Err(e @ Error::InvalidToken(_)) => {
-                IpcResponse::error(ErrorCode::InvalidRequest, e.to_string())
-            }
-            Err(e) => IpcResponse::error(ErrorCode::Failed, e.to_string()),
-        }
-    }
-
-    pub fn clear_token(&self) -> IpcResponse {
-        match self.token.clear() {
-            Ok(()) => IpcResponse::Ok,
-            Err(e) => IpcResponse::error(ErrorCode::Failed, e.to_string()),
-        }
     }
 
     /// "Check now" from the settings app. Blocks the calling IPC thread
@@ -89,7 +65,7 @@ impl Updates {
     /// Called on every orchestrator tick: starts a background check when one
     /// is due.
     pub fn tick(self: &Arc<Self>) {
-        if !self.shared.config().updates.auto_check || !self.token.is_set() {
+        if !self.shared.config().updates.auto_check {
             return;
         }
         {
@@ -130,16 +106,11 @@ impl Updates {
             return None;
         }
         self.ready.store(false, Ordering::SeqCst);
-        Updater::new(&self.shared.config().updates.repo, None).ok()
+        Updater::new(&self.shared.config().updates.repo).ok()
     }
 
     fn check_and_download(&self) -> UpdateStatus {
-        let token = match self.token.load() {
-            Ok(Some(t)) => t,
-            Ok(None) => return UpdateStatus::TokenNeeded,
-            Err(e) => return failed(e),
-        };
-        let updater = match Updater::new(&self.shared.config().updates.repo, Some(token)) {
+        let updater = match Updater::new(&self.shared.config().updates.repo) {
             Ok(u) => u,
             Err(e) => return failed(e),
         };
@@ -186,23 +157,12 @@ mod tests {
     }
 
     #[test]
-    fn token_requests_without_install() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::new(dir.path().join("c"), dir.path().join("d"));
-        let updates = Updates::new(Arc::new(Shared::new(Default::default())), &paths);
-        assert!(!updates.token_set());
+    fn check_without_install_fails_cleanly() {
+        let updates = Updates::new(Arc::new(Shared::new(Default::default())));
         assert!(matches!(
-            updates.set_token("not a token"),
-            IpcResponse::Error {
-                code: ErrorCode::InvalidRequest,
-                ..
-            }
-        ));
-        assert_eq!(updates.clear_token(), IpcResponse::Ok);
-        assert_eq!(
             updates.check_now(),
-            IpcResponse::Update(UpdateStatus::TokenNeeded)
-        );
+            IpcResponse::Update(UpdateStatus::Failed { .. })
+        ));
         assert!(updates.take_ready(Mode::Desktop).is_none());
     }
 }

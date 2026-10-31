@@ -82,7 +82,7 @@ impl Handler {
                     agent_version: VERSION.into(),
                     mode: s.mode,
                     tv: s.tv,
-                    update_token_set: self.updates.token_set(),
+                    update_token_set: false,
                     last_error: s.last_error,
                 })
             }
@@ -170,8 +170,10 @@ impl Handler {
             Q::TvPair { ip } => self.pair(ip),
             Q::TvCommand { command } => self.tv_command(command),
             Q::CheckForUpdates => self.updates.check_now(),
-            Q::SetUpdateToken { token } => self.updates.set_token(&token),
-            Q::ClearUpdateToken => self.updates.clear_token(),
+            Q::SetUpdateToken { .. } | Q::ClearUpdateToken => IpcResponse::error(
+                ErrorCode::Unsupported,
+                "updates need no token: the repo is public",
+            ),
             Q::Subscribe | Q::Shutdown => {
                 unreachable!("handled by the connection loop")
             }

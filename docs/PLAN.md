@@ -253,18 +253,10 @@ small subset of the ADB protocol we need (CNXN/AUTH/OPEN/WRTE, `shell:`).
   `%LOCALAPPDATA%\UltimateConsole`, no admin, Start-menu shortcut, delta
   updates, clean uninstall entry in "Apps & features", and install/uninstall
   hooks the app handles itself.
-- Updates come from **GitHub Releases of this private repo** (decided: Dhia is
-  the only user). Private releases need auth, so:
-  - Dhia creates a **fine-grained personal access token** limited to this one
-    repo with *Contents: read-only*, and pastes it once into the settings app
-    (About/Updates page, with a link to the GitHub token page and a "Test"
-    button).
-  - The token is stored encrypted with **DPAPI** (`CryptProtectData`, current
-    user scope) in `%LOCALAPPDATA%\UltimateConsole\update-token.bin`. It is
-    never compiled into the binary or committed.
-  - The updater passes it to Velopack's `GithubSource` (supports an access
-    token for private repos). If missing/expired, update checks are skipped
-    and the settings app shows "update token needed".
+- Updates come from **GitHub Releases of this repo**, read by Velopack's
+  `GithubSource` without a token (the repo is public since 2026-10-31; 0.1.0
+  used a DPAPI-encrypted token while it was private, and the uninstaller
+  still deletes a leftover `update-token.bin`).
   - The very first install is done by downloading the Setup.exe from the
     GitHub Releases page by hand.
 - Uninstall hook (`--veloapp-uninstall`) must, in order:
@@ -476,8 +468,7 @@ on the real PC. "Interfaces" lists what other packages may rely on.
   check in agent (daily + "check now" via IPC; apply on next exit from
   gaming mode / at idle, never during gaming mode), uninstall hook (§2.12).
 - `release.yml`: on tag `v*` → build, `vpk pack`, upload to this repo's
-  GitHub Releases. Updater auth: DPAPI-encrypted fine-grained token (§2.12),
-  entered in the settings app.
+  GitHub Releases (public, no token; §2.12).
 - Uninstall verification checklist (every file/key from the manifest).
 - Optional: code signing (self-signed is fine for personal use; SmartScreen
   will warn on unsigned).
@@ -533,8 +524,8 @@ Wave 3: WP-07, WP-08. Wave 4: WP-10, then real-hardware end-to-end test.
 
 ## 7. Decisions (answered by Dhia, 2026-10-30)
 
-1. **Updates**: Dhia is the only user, so releases stay in this private repo;
-   the updater authenticates with a DPAPI-encrypted fine-grained token (§2.12).
+1. **Updates**: from this repo's GitHub Releases. The repo was made public on
+   2026-10-31, so the updater needs no token (§2.12).
 2. **Hotkeys**: defaults `Ctrl+Alt+G` / `Ctrl+Alt+O` / `Ctrl+Alt+Shift+R`
    accepted, must not clash with anything Windows uses, and all must be
    changeable in the settings app (§2.13).

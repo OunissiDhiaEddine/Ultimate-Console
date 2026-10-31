@@ -29,7 +29,6 @@ struct State {
     config: Config,
     mode: Mode,
     tv: TvPowerState,
-    update_token_set: bool,
 }
 
 /// The fake agent. Shared by every connection made through [`MockConnector`].
@@ -52,7 +51,7 @@ impl MockAgent {
             agent_version: uc_core::VERSION.into(),
             mode: s.mode,
             tv: s.tv,
-            update_token_set: s.update_token_set,
+            update_token_set: false,
             last_error: None,
         }
     }
@@ -197,25 +196,14 @@ impl MockAgent {
             }
             IpcRequest::CheckForUpdates => {
                 thread::sleep(DELAY);
-                R::Update(if self.state.lock().unwrap().update_token_set {
-                    UpdateStatus::UpToDate {
-                        version: uc_core::VERSION.into(),
-                    }
-                } else {
-                    UpdateStatus::TokenNeeded
+                R::Update(UpdateStatus::UpToDate {
+                    version: uc_core::VERSION.into(),
                 })
             }
-            IpcRequest::SetUpdateToken { token } => {
-                if token.trim().is_empty() {
-                    return R::error(ErrorCode::InvalidRequest, "empty token");
-                }
-                self.state.lock().unwrap().update_token_set = true;
-                R::Ok
-            }
-            IpcRequest::ClearUpdateToken => {
-                self.state.lock().unwrap().update_token_set = false;
-                R::Ok
-            }
+            IpcRequest::SetUpdateToken { .. } | IpcRequest::ClearUpdateToken => R::error(
+                ErrorCode::Unsupported,
+                "no token needed: the repo is public",
+            ),
             IpcRequest::Subscribe => {
                 self.subscribers.lock().unwrap().push(writer.clone());
                 R::Ok

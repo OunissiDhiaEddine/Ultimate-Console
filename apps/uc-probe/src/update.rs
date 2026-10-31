@@ -1,22 +1,15 @@
-//! `uc-probe update …` (WP-10): the encrypted update token, the autostart
-//! value, and a real update check. `check` only works from an installed copy
+//! `uc-probe update …` (WP-10): the autostart value and a real update check. `check` only works from an installed copy
 //! (`%LOCALAPPDATA%\UltimateConsole\current\uc-probe.exe`).
 
 use std::process::ExitCode;
 
 use clap::Subcommand;
 use uc_core::{Config, Paths};
-use uc_update::{TokenStore, Updater, autostart};
+use uc_update::{Updater, autostart};
 
 #[derive(Subcommand)]
 pub enum UpdateCmd {
-    /// Encrypt and save the GitHub token (DPAPI, current user).
-    TokenSet { token: String },
-    /// Say whether a token is saved and whether it decrypts. Never prints it.
-    TokenStatus,
-    /// Delete the saved token.
-    TokenClear,
-    /// Ask GitHub for a newer release, with the saved token.
+    /// Ask GitHub for a newer release.
     Check {
         /// Also download it (it is applied by the agent, not here).
         #[arg(long)]
@@ -28,26 +21,10 @@ pub enum UpdateCmd {
 
 pub fn run(cmd: UpdateCmd) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let paths = Paths::from_env()?;
-    let store = TokenStore::for_paths(&paths);
     match cmd {
-        UpdateCmd::TokenSet { token } => {
-            store.save(&token)?;
-            println!("token saved to {}", store.path().display());
-        }
-        UpdateCmd::TokenStatus => match store.load()? {
-            Some(t) => println!("token saved, decrypts OK ({} characters)", t.len()),
-            None => {
-                println!("no token saved ({})", store.path().display());
-                return Ok(ExitCode::FAILURE);
-            }
-        },
-        UpdateCmd::TokenClear => {
-            store.clear()?;
-            println!("token removed");
-        }
         UpdateCmd::Check { download } => {
             let config = Config::load(&paths.config_file())?;
-            let updater = Updater::new(&config.updates.repo, store.load()?)?;
+            let updater = Updater::new(&config.updates.repo)?;
             println!(
                 "installed {}, checking {}",
                 updater.current_version(),

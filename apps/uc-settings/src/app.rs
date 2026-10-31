@@ -194,7 +194,6 @@ pub struct App {
     pub pair_result: Option<Result<String, String>>,
     pub tv_test: Option<String>,
     pub update: Option<UpdateStatus>,
-    pub token_input: String,
     pub confirm_uninstall: bool,
 }
 
@@ -228,7 +227,6 @@ impl App {
             pair_result: None,
             tv_test: None,
             update: None,
-            token_input: String::new(),
             confirm_uninstall: false,
         }
     }
@@ -382,15 +380,6 @@ impl App {
                 self.tv_test = Some(format!("{command:?} failed: {message}"));
             }
             (_, R::Update(u)) => self.update = Some(u),
-            (Q::SetUpdateToken { .. }, R::Ok) => {
-                self.token_input.clear();
-                self.info("Update token saved (encrypted for your Windows account).");
-                self.outbox.push(IpcRequest::GetStatus);
-            }
-            (Q::ClearUpdateToken, R::Ok) => {
-                self.info("Update token removed.");
-                self.outbox.push(IpcRequest::GetStatus);
-            }
             (Q::IdentifyDisplays, R::Ok) => {
                 self.info("Each screen shows its number for a few seconds.");
             }

@@ -9,9 +9,8 @@
 //!
 //! - [`lifecycle`]: the Velopack hooks. Install registers autostart, first run
 //!   starts the agent, uninstall stops the agent and deletes everything.
-//! - [`updater`]: checks and downloads updates from this repo's private GitHub
+//! - [`updater`]: checks and downloads updates from this repo's public GitHub
 //!   Releases, and applies one when the agent says it's a good time.
-//! - [`token`]: the GitHub token for private releases, DPAPI-encrypted.
 //! - [`autostart`]: the HKCU Run value.
 //! - [`uninstall`]: deletes the app's own files (config, state, keys, logs).
 //!
@@ -21,12 +20,10 @@
 pub mod autostart;
 mod error;
 pub mod lifecycle;
-pub mod token;
 pub mod uninstall;
 pub mod updater;
 
 pub use error::{Error, Result};
-pub use token::TokenStore;
 pub use updater::{PendingUpdate, Updater};
 
 /// Velopack package id. Also the "Apps & features" key name and the install

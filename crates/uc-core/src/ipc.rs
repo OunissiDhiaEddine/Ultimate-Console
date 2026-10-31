@@ -76,10 +76,12 @@ pub enum IpcRequest {
         command: TvCommand,
     },
     CheckForUpdates,
-    /// Stores the GitHub token for private-release updates (DPAPI-encrypted by the agent).
+    /// Obsolete since 0.1.1: the repo is public, so updates need no token.
+    /// Agents answer `Unsupported`. Kept so older settings apps still parse.
     SetUpdateToken {
         token: String,
     },
+    /// Obsolete since 0.1.1, see [`IpcRequest::SetUpdateToken`].
     ClearUpdateToken,
     /// Start receiving [`IpcEvent`]s on this connection.
     Subscribe,
@@ -189,6 +191,7 @@ pub struct AgentStatus {
     pub agent_version: String,
     pub mode: Mode,
     pub tv: TvPowerState,
+    /// Obsolete since 0.1.1 (no token needed); always `false`.
     pub update_token_set: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
@@ -247,7 +250,8 @@ pub enum UpdateStatus {
     Available {
         version: String,
     },
-    /// No GitHub token stored, so private releases can't be read.
+    /// Obsolete since 0.1.1: only sent by 0.1.0 agents, which needed a
+    /// GitHub token for the then-private repo.
     TokenNeeded,
     Failed {
         message: String,
