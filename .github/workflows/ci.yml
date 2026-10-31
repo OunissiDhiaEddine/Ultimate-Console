@@ -48,7 +48,9 @@ jobs:
           New-Item -ItemType Directory -Force publish | Out-Null
           foreach ($exe in 'uc-agent', 'uc-settings', 'uc-probe') { Copy-Item "target/release/$exe.exe" publish/ }
           Copy-Item LICENSE, README.md publish/
-          vpk pack --packId UltimateConsole --packVersion "0.0.0-ci.${{ github.run_number }}" `
+          $meta = cargo metadata --no-deps --format-version 1 --locked | ConvertFrom-Json
+          $version = ($meta.packages | Where-Object name -eq 'uc-core').version
+          vpk pack --packId UltimateConsole --packVersion "$version-ci.${{ github.run_number }}" `
             --packDir publish --mainExe uc-settings.exe --packTitle "Ultimate Console" `
             --packAuthors "Dhia" --icon packaging/icon.ico --releaseNotes packaging/release-notes.md `
             --shortcuts StartMenuRoot --outputDir Releases
