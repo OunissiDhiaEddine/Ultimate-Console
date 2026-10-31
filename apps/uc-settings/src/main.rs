@@ -100,7 +100,14 @@ fn main() -> ExitCode {
         viewport: egui::ViewportBuilder::default()
             .with_title("Ultimate Console Settings")
             .with_inner_size([900.0, 640.0])
-            .with_min_inner_size([640.0, 420.0]),
+            .with_min_inner_size([640.0, 420.0])
+            // Pre-decoded 64x64 RGBA (packaging/brand/make-icons.py): no image
+            // decoder in the binary and no work at startup.
+            .with_icon(egui::IconData {
+                rgba: include_bytes!("../../../packaging/brand/icon-64.rgba").to_vec(),
+                width: 64,
+                height: 64,
+            }),
         ..Default::default()
     };
     match eframe::run_native(

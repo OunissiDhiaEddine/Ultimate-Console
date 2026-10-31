@@ -9,7 +9,7 @@ The app ships as a [Velopack](https://velopack.io) package (plan §2.12, WP-10).
 | Main exe | `uc-settings.exe` (Start-menu shortcut, runs the install/uninstall hooks) |
 | Also shipped | `uc-agent.exe`, `uc-probe.exe`, `README.md`, `LICENSE` in `current\` |
 | Updates | GitHub Releases of this repo (public, no token) |
-| Files here | `icon.ico` (installer and shortcut icon), `release-notes.md` (shown on the release and in the package) |
+| Files here | `icon.ico` (installer, shortcut and .exe icon, generated from `brand/`), `brand/` (logo SVG sources, `make-icons.py` that regenerates every raster, `icon_res.rs` used by the apps' `build.rs`), `release-notes.md` (shown on the release and in the package) |
 
 ## Making a release
 

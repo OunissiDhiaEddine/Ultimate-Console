@@ -75,7 +75,7 @@ h2 kbd, h3 kbd { font-size: 0.6em; vertical-align: 0.35em; }
 .nav-inner { display: flex; align-items: center; gap: 24px; height: 64px; }
 .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 700; letter-spacing: -0.01em; }
 .brand:hover { text-decoration: none; }
-.brand img { border-radius: 8px; }
+.brand img { display: block; }
 .nav nav { margin-left: auto; }
 .nav-links { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; }
 .nav-links a { color: var(--muted); padding: 8px 12px; border-radius: 8px; font-size: 0.95rem; transition: color 0.2s, background 0.2s; }
