@@ -127,7 +127,9 @@ pub struct Display {
     /// The TV. `None` until picked in the settings app; gaming mode refuses to start without it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<DisplayId>,
-    /// Mode to apply on the TV. `None` keeps its preferred mode.
+    /// Mode to apply on the TV. `None` = automatic: the largest 16:9 mode
+    /// (3840x2160 rather than a 4096x2160 "preferred" one) at its highest
+    /// refresh rate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<DisplayMode>,
     /// Turn HDR on for the TV while gaming.
@@ -209,6 +211,11 @@ pub struct Steam {
     pub bp_launch_timeout_secs: u32,
     /// How long BP must be gone before gaming mode exits.
     pub bp_close_debounce_ms: u32,
+    /// Leaving Big Picture (Steam's own "Exit Big Picture") also leaves
+    /// gaming mode. Off by default: Steam sometimes drops out of Big Picture
+    /// by itself, so the agent opens it again and gaming mode ends only by
+    /// the hotkey, the overlay or Steam quitting.
+    pub exit_with_big_picture: bool,
 }
 
 impl Default for Steam {
@@ -220,6 +227,7 @@ impl Default for Steam {
             bp_window_title: "Steam Big Picture Mode".into(),
             bp_launch_timeout_secs: 30,
             bp_close_debounce_ms: 2000,
+            exit_with_big_picture: false,
         }
     }
 }

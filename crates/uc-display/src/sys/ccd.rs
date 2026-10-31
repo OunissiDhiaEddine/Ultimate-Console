@@ -377,6 +377,13 @@ fn set_mode(gdi_name: &[u16], mode: &DisplayMode) -> Result<()> {
     if !ok.as_bool() {
         return Err(Error::win32("EnumDisplaySettingsW", 0u32));
     }
+    let same_rate = mode
+        .refresh_hz
+        .is_none_or(|hz| dm.dmDisplayFrequency == hz as u32);
+    if dm.dmPelsWidth == mode.width && dm.dmPelsHeight == mode.height && same_rate {
+        // Already there: a mode set would only blank the TV for a moment.
+        return Ok(());
+    }
     dm.dmPelsWidth = mode.width;
     dm.dmPelsHeight = mode.height;
     dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
@@ -818,6 +825,24 @@ pub fn apply_single(
         warn!("{msg}");
         warnings.push(msg);
     };
+
+    if mode.is_none() {
+        match active_source_name(adapter, target_id) {
+            Ok(name) => {
+                let modes = driver_modes(&name);
+                match identity::auto_mode(&modes) {
+                    Some(m) => {
+                        info!(width = m.width, height = m.height, hz = ?m.refresh_hz, "automatic TV mode");
+                        if let Err(e) = set_mode(&name, m) {
+                            warn_user(format!("could not set {}x{}: {e}", m.width, m.height));
+                        }
+                    }
+                    None => debug!("no 16:9 mode listed; keeping the TV's own mode"),
+                }
+            }
+            Err(e) => warn_user(format!("could not read the display's modes: {e}")),
+        }
+    }
 
     if let Some(want_mode) = mode {
         match active_source_name(adapter, target_id) {
