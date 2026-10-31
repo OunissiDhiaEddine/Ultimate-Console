@@ -1,14 +1,22 @@
 name: Release
 
-# Push a tag `vX.Y.Z` (matching the workspace version in Cargo.toml) to build
-# the Velopack installer and publish it as a GitHub Release of this repo.
-# Run it by hand ("Run workflow") for a dry run: it packs and uploads the
-# installer as a workflow artifact, without publishing anything.
+# Builds the Velopack installer and publishes it as a GitHub Release of this
+# repo, tagged `v<workspace version>`. Two ways to release:
+# - push a tag `vX.Y.Z` matching the version in Cargo.toml, or
+# - "Run workflow" on main with "publish" ticked: the release and its tag
+#   are created on the commit that was built.
+# "Run workflow" without "publish" is a dry run: the installer is attached to
+# the run as an artifact and nothing is published.
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish the GitHub Release (and create its tag)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -45,6 +53,7 @@ jobs:
             throw "Tag $env:GITHUB_REF_NAME does not match the workspace version $version in Cargo.toml"
           }
           "VERSION=$version" >> $env:GITHUB_ENV
+          "TAG=v$version" >> $env:GITHUB_ENV
           Write-Host "Version $version"
 
       - name: Test
@@ -93,12 +102,13 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub Release
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' || (inputs.publish && github.ref == 'refs/heads/main')
         run: >
           vpk upload github
           --repoUrl "${{ github.server_url }}/${{ github.repository }}"
           --token "${{ secrets.GITHUB_TOKEN }}"
           --outputDir Releases
-          --tag ${{ github.ref_name }}
+          --tag ${{ env.TAG }}
+          --targetCommitish ${{ github.sha }}
           --releaseName "Ultimate Console ${{ env.VERSION }}"
           --publish
