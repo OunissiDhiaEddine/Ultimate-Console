@@ -54,6 +54,9 @@ pub fn same_display(a: &DisplayId, b: &DisplayId) -> bool {
     }
 }
 
+/// Label for `display.mode = None`.
+const AUTO_MODE: &str = "Automatic (largest 16:9, e.g. 3840 × 2160)";
+
 pub fn mode_label(m: &DisplayMode) -> String {
     match m.refresh_hz {
         Some(hz) if (hz - hz.round()).abs() < 0.005 => {
@@ -344,11 +347,11 @@ impl App {
                 .mode
                 .as_ref()
                 .map(mode_label)
-                .unwrap_or_else(|| "TV's preferred mode".into());
+                .unwrap_or_else(|| AUTO_MODE.into());
             egui::ComboBox::from_id_salt("display_mode")
                 .selected_text(current)
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut d.display.mode, None, "TV's preferred mode");
+                    ui.selectable_value(&mut d.display.mode, None, AUTO_MODE);
                     for m in target.map(|t| t.modes.as_slice()).unwrap_or_default() {
                         ui.selectable_value(&mut d.display.mode, Some(m.clone()), mode_label(m));
                     }
@@ -671,9 +674,19 @@ impl App {
             });
             millis(
                 ui,
-                "Leave gaming mode after Big Picture is gone for",
+                "Count Big Picture as gone after",
                 &mut d.steam.bp_close_debounce_ms,
                 60_000,
+            );
+            ui.checkbox(
+                &mut d.steam.exit_with_big_picture,
+                "Exiting Big Picture also leaves gaming mode",
+            );
+            hint(
+                ui,
+                "Off: if Steam drops out of Big Picture (it sometimes does by itself), the agent \
+                 opens it again. Leave gaming mode with the hotkey or the overlay. Quitting \
+                 Steam always leaves gaming mode.",
             );
         });
     }

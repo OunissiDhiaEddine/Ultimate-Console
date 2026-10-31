@@ -38,6 +38,10 @@ pub const BP_REAPPEAR_GRACE: Duration = Duration::from_secs(3);
 /// may stay missing before gaming mode ends anyway (for a Steam that leaves
 /// Big Picture without showing a new desktop window).
 pub const BP_UNSURE_EXIT_AFTER: Duration = Duration::from_secs(25);
+/// Least time between two attempts to reopen Big Picture.
+pub const BP_REOPEN_EVERY: Duration = Duration::from_secs(20);
+/// How long a reopen waits for the Big Picture window.
+pub const BP_REOPEN_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Everything the state machine needs from the OS. The real one is in
 /// `platform.rs`; tests use a fake.
@@ -138,6 +142,8 @@ pub struct Orchestrator<P: Platform> {
     /// Since when the verdict has been `Unsure` (a running game resets it).
     bp_unsure_since: Option<std::time::Instant>,
     unsure_exit_after: Duration,
+    /// Last attempt to reopen Big Picture after Steam left it.
+    bp_reopened_at: Option<std::time::Instant>,
 }
 
 impl<P: Platform> Orchestrator<P> {
@@ -151,6 +157,7 @@ impl<P: Platform> Orchestrator<P> {
             bp_missing: false,
             bp_unsure_since: None,
             unsure_exit_after: BP_UNSURE_EXIT_AFTER,
+            bp_reopened_at: None,
         }
     }
 
@@ -218,6 +225,7 @@ impl<P: Platform> Orchestrator<P> {
         }
         self.bp_missing = false;
         self.bp_unsure_since = None;
+        self.bp_reopened_at = None;
         let Some(target) = self.config.display.target.clone() else {
             let msg = "pick the TV in the settings app (Display page) first";
             self.shared.report_error(format!("Gaming mode: {msg}"));
@@ -429,9 +437,39 @@ impl<P: Platform> Orchestrator<P> {
             verdict
         };
         match verdict {
-            BpVerdict::Left => {
+            BpVerdict::SteamQuit => {
+                tracing::info!("Steam quit; leaving gaming mode");
+                let _ = self.exit(ExitTrigger::BigPictureClosed);
+            }
+            BpVerdict::Left if steam.exit_with_big_picture => {
                 tracing::info!("Big Picture was left; leaving gaming mode");
                 let _ = self.exit(ExitTrigger::BigPictureClosed);
+            }
+            BpVerdict::Left => {
+                // Steam drops out of Big Picture by itself now and then;
+                // gaming mode ends by the hotkey or overlay, not this.
+                let due = self
+                    .bp_reopened_at
+                    .is_none_or(|t| t.elapsed() >= BP_REOPEN_EVERY);
+                if due {
+                    self.bp_reopened_at = Some(std::time::Instant::now());
+                    self.bp_unsure_since = None;
+                    tracing::info!("Steam left Big Picture; opening it again");
+                    let reopened = self
+                        .platform
+                        .launch_big_picture(&steam)
+                        .and_then(|()| self.platform.wait_big_picture(&steam, BP_REOPEN_TIMEOUT));
+                    match reopened {
+                        Ok(true) => {
+                            self.bp_missing = false;
+                            tracing::info!("Big Picture is back");
+                        }
+                        Ok(false) => tracing::warn!("Big Picture did not come back yet"),
+                        Err(e) => self
+                            .shared
+                            .report_error(format!("could not reopen Big Picture: {e}")),
+                    }
+                }
             }
             BpVerdict::Back => {
                 self.bp_missing = false;
@@ -779,7 +817,7 @@ pub(crate) mod tests {
     #[test]
     fn big_picture_closing_exits_without_closing_it_again() {
         let fake = Fake {
-            bp_verdict: BpVerdict::Left,
+            bp_verdict: BpVerdict::SteamQuit,
             ..Fake::default()
         };
         let mut r = rig(configured(), fake);
@@ -813,8 +851,8 @@ pub(crate) mod tests {
         r.orch.recheck_big_picture();
         assert_eq!(r.calls(), ["big_picture_verdict"]);
         assert_eq!(r.orch.mode(), Mode::Gaming);
-        // Steam shows its desktop window: leave.
-        r.orch.platform_mut().bp_verdict = BpVerdict::Left;
+        // Steam quit: leave.
+        r.orch.platform_mut().bp_verdict = BpVerdict::SteamQuit;
         r.orch.recheck_big_picture();
         assert!(r.calls().contains(&"start_explorer".to_string()));
         assert_eq!(r.orch.mode(), Mode::Desktop);
@@ -824,11 +862,53 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn big_picture_missing_too_long_without_a_game_leaves() {
+    fn big_picture_missing_too_long_is_reopened() {
         let mut r = rig(configured(), Fake::default());
         r.orch.unsure_exit_after = Duration::ZERO;
         r.orch.enter().unwrap();
+        r.calls();
         r.orch.platform_mut().bp_verdict = BpVerdict::Unsure;
+        r.orch.on_big_picture_closed();
+        let calls = r.calls();
+        assert!(
+            calls.contains(&"launch_big_picture".to_string()),
+            "{calls:?}"
+        );
+        assert_eq!(r.orch.mode(), Mode::Gaming);
+    }
+
+    #[test]
+    fn steam_leaving_big_picture_reopens_it_once_per_interval() {
+        let mut r = rig(configured(), Fake::default());
+        r.orch.enter().unwrap();
+        r.calls();
+        r.orch.platform_mut().bp_verdict = BpVerdict::Left;
+        r.orch.on_big_picture_closed();
+        assert_eq!(
+            r.calls(),
+            [
+                "big_picture_verdict",
+                "launch_big_picture",
+                "wait_big_picture"
+            ]
+        );
+        assert_eq!(r.orch.mode(), Mode::Gaming);
+        // Right after, it doesn't hammer Steam.
+        r.orch.on_big_picture_closed();
+        assert_eq!(r.calls(), ["big_picture_verdict"]);
+        assert_eq!(r.orch.mode(), Mode::Gaming);
+    }
+
+    #[test]
+    fn leaving_big_picture_can_leave_gaming_mode_if_configured() {
+        let mut c = configured();
+        c.steam.exit_with_big_picture = true;
+        let fake = Fake {
+            bp_verdict: BpVerdict::Left,
+            ..Fake::default()
+        };
+        let mut r = rig(c, fake);
+        r.orch.enter().unwrap();
         r.orch.on_big_picture_closed();
         assert_eq!(r.orch.mode(), Mode::Desktop);
     }

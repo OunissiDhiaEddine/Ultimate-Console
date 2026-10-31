@@ -124,6 +124,24 @@ pub fn pick_mode<'a>(available: &'a [DisplayMode], want: &DisplayMode) -> Option
         .min_by(|a, b| (hz_of(a) - hz).abs().total_cmp(&(hz_of(b) - hz).abs()))
 }
 
+/// The automatic TV mode: the largest 16:9 mode at its highest refresh rate.
+/// TVs often report 4096x2160 (cinema 4K) as preferred, which Windows itself
+/// avoids for the desktop; 3840x2160 is what they are made for. `None` when
+/// no 16:9 mode is listed (keep whatever the TV picks).
+pub fn auto_mode(available: &[DisplayMode]) -> Option<&DisplayMode> {
+    let is_16_9 = |m: &&DisplayMode| m.width * 9 == m.height * 16;
+    let largest = available
+        .iter()
+        .filter(is_16_9)
+        .map(|m| m.width * m.height)
+        .max()?;
+    available
+        .iter()
+        .filter(is_16_9)
+        .filter(|m| m.width * m.height == largest)
+        .max_by(|a, b| hz_of(a).total_cmp(&hz_of(b)))
+}
+
 fn hz_of(m: &DisplayMode) -> f64 {
     m.refresh_hz.unwrap_or(0.0)
 }
@@ -266,5 +284,23 @@ mod tests {
                 mode(1920, 1080, 60.0)
             ]
         );
+    }
+
+    #[test]
+    fn auto_mode_prefers_16_9_over_cinema_4k() {
+        let m = |w, h, hz| DisplayMode {
+            width: w,
+            height: h,
+            refresh_hz: Some(hz),
+        };
+        let modes = [
+            m(4096, 2160, 60.0),
+            m(3840, 2160, 30.0),
+            m(3840, 2160, 60.0),
+            m(1920, 1080, 120.0),
+        ];
+        assert_eq!(auto_mode(&modes), Some(&m(3840, 2160, 60.0)));
+        assert_eq!(auto_mode(&[m(4096, 2160, 60.0)]), None);
+        assert_eq!(auto_mode(&[]), None);
     }
 }

@@ -92,8 +92,11 @@ pub enum BpVerdict {
     Back,
     /// A game runs; Big Picture hides behind it and comes back after.
     GameRunning,
-    /// Clearly left: Steam quit, or it is showing its desktop window.
+    /// Steam is showing its desktop window instead (the user left Big
+    /// Picture, or Steam dropped out of it by itself).
     Left,
+    /// Steam is not running any more.
+    SteamQuit,
     /// No window, no game, no desktop Steam: for example right after a game
     /// quit, before Big Picture redraws. Not a reason to leave gaming mode.
     Unsure,
@@ -105,7 +108,9 @@ impl SteamView {
             BpVerdict::Back
         } else if self.game.is_some() {
             BpVerdict::GameRunning
-        } else if !self.steam_running || (self.main_window_visible && !self.big_picture_hidden) {
+        } else if !self.steam_running {
+            BpVerdict::SteamQuit
+        } else if self.main_window_visible && !self.big_picture_hidden {
             BpVerdict::Left
         } else {
             BpVerdict::Unsure
@@ -480,7 +485,7 @@ mod tests {
         };
         assert_eq!(v(|s| s.big_picture_visible = true), BpVerdict::Back);
         assert_eq!(v(|s| s.game = Some(207610)), BpVerdict::GameRunning);
-        assert_eq!(v(|s| s.steam_running = false), BpVerdict::Left);
+        assert_eq!(v(|s| s.steam_running = false), BpVerdict::SteamQuit);
         assert_eq!(v(|s| s.main_window_visible = true), BpVerdict::Left);
         // Nothing to go on (a game just quit): stay.
         assert_eq!(v(|_| {}), BpVerdict::Unsure);
