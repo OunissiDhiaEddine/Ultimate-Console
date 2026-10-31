@@ -20,6 +20,7 @@ use uc_sysinfo::{Sampler, StatsSource, format_bytes, format_uptime};
 
 mod shell;
 mod tv;
+mod update;
 
 #[derive(Parser)]
 #[command(
@@ -69,6 +70,9 @@ enum Command {
     Power(power::PowerCmd),
     /// Android TV: discover, pair, wake, sleep, state (WP-02).
     Tv(tv::TvArgs),
+    /// Update token, autostart value and update check (WP-10).
+    #[command(subcommand)]
+    Update(update::UpdateCmd),
 }
 
 #[derive(Subcommand)]
@@ -135,6 +139,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     match cli.command {
         Command::Power(cmd) => return power::run(cmd),
         Command::Tv(args) => return tv::run(args),
+        Command::Update(cmd) => return update::run(cmd),
         Command::Paths => {
             let p = Paths::from_env()?;
             println!("config: {}", p.config_file().display());

@@ -1,0 +1,28 @@
+[package]
+name = "uc-update"
+description = "Install hooks, updates from the private GitHub Releases, update-token store and full uninstall for Ultimate Console (WP-10)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+uc-core.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+velopack.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security_Cryptography",
+    "Win32_System_Memory",
+    "Win32_System_Registry",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
