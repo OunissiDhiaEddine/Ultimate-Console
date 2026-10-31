@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 uc-core.workspace = true
+uc-update.workspace = true
 eframe.workspace = true
 tracing.workspace = true
 

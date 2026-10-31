@@ -1,0 +1,104 @@
+name: Release
+
+# Push a tag `vX.Y.Z` (matching the workspace version in Cargo.toml) to build
+# the Velopack installer and publish it as a GitHub Release of this repo.
+# Run it by hand ("Run workflow") for a dry run: it packs and uploads the
+# installer as a workflow artifact, without publishing anything.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  # Must match the `velopack` crate version in Cargo.toml.
+  VPK_VERSION: 1.3.39-g8d2844f
+  PACK_ID: UltimateConsole
+
+jobs:
+  release:
+    name: build · pack · publish (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Read version
+        shell: pwsh
+        run: |
+          $meta = cargo metadata --no-deps --format-version 1 --locked | ConvertFrom-Json
+          $version = ($meta.packages | Where-Object name -eq 'uc-core').version
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match the workspace version $version in Cargo.toml"
+          }
+          "VERSION=$version" >> $env:GITHUB_ENV
+          Write-Host "Version $version"
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Build release binaries
+        run: cargo build --release --locked -p uc-agent -p uc-settings -p uc-probe
+
+      - name: Stage files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force publish | Out-Null
+          foreach ($exe in 'uc-agent', 'uc-settings', 'uc-probe') {
+            Copy-Item "target/release/$exe.exe" publish/
+          }
+          Copy-Item LICENSE, README.md publish/
+
+      - name: Install vpk
+        run: dotnet tool install -g vpk --version ${{ env.VPK_VERSION }}
+
+      # Previous release, so vpk can build a small delta package.
+      - name: Download previous release
+        continue-on-error: true
+        run: vpk download github --repoUrl "${{ github.server_url }}/${{ github.repository }}" --token "${{ secrets.GITHUB_TOKEN }}" --outputDir Releases
+
+      - name: Pack
+        run: >
+          vpk pack
+          --packId ${{ env.PACK_ID }}
+          --packVersion ${{ env.VERSION }}
+          --packDir publish
+          --mainExe uc-settings.exe
+          --packTitle "Ultimate Console"
+          --packAuthors "Dhia"
+          --icon packaging/icon.ico
+          --releaseNotes packaging/release-notes.md
+          --shortcuts StartMenuRoot
+          --outputDir Releases
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ultimate-console-${{ env.VERSION }}
+          path: Releases/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        run: >
+          vpk upload github
+          --repoUrl "${{ github.server_url }}/${{ github.repository }}"
+          --token "${{ secrets.GITHUB_TOKEN }}"
+          --outputDir Releases
+          --tag ${{ github.ref_name }}
+          --releaseName "Ultimate Console ${{ env.VERSION }}"
+          --publish

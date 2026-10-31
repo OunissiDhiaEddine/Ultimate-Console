@@ -39,6 +39,24 @@ jobs:
       - name: Build release
         run: cargo build --workspace --release --locked
 
+      # Same pack as release.yml, so a packaging problem shows up on the PR
+      # rather than at release time. Keep the vpk version in step with it.
+      - name: Velopack pack (dry run)
+        shell: pwsh
+        run: |
+          dotnet tool install -g vpk --version 1.3.39-g8d2844f
+          New-Item -ItemType Directory -Force publish | Out-Null
+          foreach ($exe in 'uc-agent', 'uc-settings', 'uc-probe') { Copy-Item "target/release/$exe.exe" publish/ }
+          Copy-Item LICENSE, README.md publish/
+          $meta = cargo metadata --no-deps --format-version 1 --locked | ConvertFrom-Json
+          $version = ($meta.packages | Where-Object name -eq 'uc-core').version
+          vpk pack --packId UltimateConsole --packVersion "$version-ci.${{ github.run_number }}" `
+            --packDir publish --mainExe uc-settings.exe --packTitle "Ultimate Console" `
+            --packAuthors "Dhia" --icon packaging/icon.ico --releaseNotes packaging/release-notes.md `
+            --shortcuts StartMenuRoot --outputDir Releases
+          if ($LASTEXITCODE -ne 0) { throw "vpk pack failed" }
+          Get-ChildItem Releases
+
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:

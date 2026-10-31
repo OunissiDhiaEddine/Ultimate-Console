@@ -19,6 +19,7 @@ use crate::orchestrator::{ExitTrigger, Orchestrator, overlay_allowed};
 use crate::overlay::OverlayHost;
 use crate::platform::{RealPlatform, SharedTv};
 use crate::shared::Shared;
+use crate::updates::Updates;
 use crate::window::WindowHandle;
 use crate::{autostart, hotkeys};
 
@@ -48,6 +49,7 @@ pub struct Service {
     tv: SharedTv,
     window: WindowHandle,
     overlay: Arc<OverlayHost>,
+    updates: Arc<Updates>,
     config_file: PathBuf,
     config_stamp: Option<SystemTime>,
     last_keepalive: Instant,
@@ -64,6 +66,7 @@ impl Service {
         tv: SharedTv,
         window: WindowHandle,
         overlay: Arc<OverlayHost>,
+        updates: Arc<Updates>,
         config_file: PathBuf,
     ) -> Self {
         let config_stamp = modified(&config_file);
@@ -73,6 +76,7 @@ impl Service {
             tv,
             window,
             overlay,
+            updates,
             config_file,
             config_stamp,
             last_keepalive: Instant::now(),
@@ -95,7 +99,12 @@ impl Service {
                     return;
                 }
                 Ok(cmd) => self.guarded("command", |s| s.handle(cmd)),
-                Err(RecvTimeoutError::Timeout) => self.guarded("tick", Self::tick),
+                Err(RecvTimeoutError::Timeout) => {
+                    self.guarded("tick", Self::tick);
+                    if self.apply_update() {
+                        return;
+                    }
+                }
                 Err(RecvTimeoutError::Disconnected) => return,
             }
             if !overlay_allowed(self.orch.mode(), self.orch.config()) {
@@ -161,6 +170,31 @@ impl Service {
         {
             self.last_keepalive = Instant::now();
             self.orch.platform_mut().tv_keepalive();
+        }
+        self.updates.tick();
+    }
+
+    /// Hands a downloaded update to Velopack and closes the agent, only in
+    /// desktop mode. `Update.exe` applies it once this process has exited and
+    /// starts the new agent. Returns true when the agent is stopping.
+    fn apply_update(&mut self) -> bool {
+        let Some(updater) = self.updates.take_ready(self.orch.mode()) else {
+            return false;
+        };
+        let Some(asset) = updater.downloaded() else {
+            return false;
+        };
+        match updater.apply_on_exit(&asset) {
+            Ok(()) => {
+                tracing::info!(version = %asset.Version, "exiting to apply the update");
+                self.window.close();
+                true
+            }
+            Err(e) => {
+                self.shared
+                    .report_error(format!("could not install update {}: {e}", asset.Version));
+                false
+            }
         }
     }
 

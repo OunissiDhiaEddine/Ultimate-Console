@@ -7,7 +7,11 @@
 //! uc-settings                   normal use
 //! uc-settings --mock            talk to a built-in fake agent (UI testing)
 //! uc-settings --check-uninstall list what the app left behind (plan §2.12)
+//! uc-settings --start-agent     start the agent and exit (used after an update)
 //! ```
+//!
+//! This is also the Velopack main exe (WP-10): it runs the install, update
+//! and uninstall hooks before anything else (`uc_update::lifecycle`).
 
 // No console window in release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -25,12 +29,22 @@ use std::sync::Arc;
 use eframe::egui;
 use uc_core::Paths;
 use uc_core::logging::{self, LogOptions};
+use uc_update::lifecycle::Startup;
 
 use crate::client::Connector;
 
-const USAGE: &str = "usage: uc-settings [--mock | --check-uninstall]";
+const USAGE: &str = "usage: uc-settings [--mock | --check-uninstall | --start-agent]";
 
 fn main() -> ExitCode {
+    // First, before logging or arguments: a Velopack hook run exits here.
+    let startup = uc_update::lifecycle::run(system::stop_agent);
+    if startup == Startup::StartAgentOnly {
+        return match system::start_agent() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => ExitCode::FAILURE,
+        };
+    }
+
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut mock = false;
     for arg in &args {
@@ -60,7 +74,18 @@ fn main() -> ExitCode {
         )
         .ok()
     });
-    tracing::info!(version = uc_core::VERSION, mock, "uc-settings starting");
+    tracing::info!(
+        version = uc_core::VERSION,
+        mock,
+        ?startup,
+        "uc-settings starting"
+    );
+    if startup == Startup::FirstRun
+        && !mock
+        && let Err(e) = system::start_agent()
+    {
+        tracing::error!("could not start the agent after install: {e}");
+    }
 
     let connector: Arc<dyn Connector> = match connector(mock) {
         Ok(c) => c,

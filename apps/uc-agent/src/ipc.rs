@@ -19,13 +19,13 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
 use serde::Serialize;
+use uc_core::VERSION;
 use uc_core::hotkey::{Hotkey, HotkeyCheck};
 use uc_core::ipc::{
     self, AgentStatus, ClientFrame, ErrorCode, IpcEvent, IpcRequest, IpcResponse, PROTOCOL_VERSION,
     ServerFrame, TvCommand, TvDevice,
 };
 use uc_core::state::Mode;
-use uc_core::{Paths, VERSION};
 use uc_tv::TvController;
 use windows::Win32::Foundation::{ERROR_PIPE_CONNECTED, HANDLE};
 use windows::Win32::Storage::FileSystem::{
@@ -41,6 +41,7 @@ use crate::hotkeys;
 use crate::platform::{SharedTv, tv_power_state};
 use crate::service::Command;
 use crate::shared::Shared;
+use crate::updates::Updates;
 use crate::window::WindowHandle;
 
 const BUFFER: u32 = 64 * 1024;
@@ -61,7 +62,7 @@ pub struct Handler {
     pub tv: SharedTv,
     pub commands: Sender<Command>,
     pub window: WindowHandle,
-    pub paths: Paths,
+    pub updates: Arc<Updates>,
 }
 
 impl Handler {
@@ -81,7 +82,7 @@ impl Handler {
                     agent_version: VERSION.into(),
                     mode: s.mode,
                     tv: s.tv,
-                    update_token_set: self.paths.update_token_file().exists(),
+                    update_token_set: self.updates.token_set(),
                     last_error: s.last_error,
                 })
             }
@@ -168,12 +169,9 @@ impl Handler {
             },
             Q::TvPair { ip } => self.pair(ip),
             Q::TvCommand { command } => self.tv_command(command),
-            Q::CheckForUpdates | Q::SetUpdateToken { .. } | Q::ClearUpdateToken => {
-                IpcResponse::error(
-                    ErrorCode::Unsupported,
-                    "updates are not available in this build yet",
-                )
-            }
+            Q::CheckForUpdates => self.updates.check_now(),
+            Q::SetUpdateToken { token } => self.updates.set_token(&token),
+            Q::ClearUpdateToken => self.updates.clear_token(),
             Q::Subscribe | Q::Shutdown => {
                 unreachable!("handled by the connection loop")
             }

@@ -16,6 +16,7 @@ uc-power.workspace = true
 uc-audio.workspace = true
 uc-sysinfo.workspace = true
 uc-overlay.workspace = true
+uc-update.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

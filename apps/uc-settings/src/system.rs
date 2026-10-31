@@ -4,6 +4,11 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::time::{Duration, Instant};
+
+use uc_core::ipc::IpcRequest;
+
+use crate::client::Connector;
 
 #[cfg(windows)]
 use uc_core::APP_NAME;
@@ -53,6 +58,44 @@ pub fn start_agent() -> io::Result<()> {
     cmd.spawn()?;
     tracing::info!(path = %agent.display(), "started the agent");
     Ok(())
+}
+
+/// Longest the uninstaller waits for the agent to restore desktop and exit.
+/// Velopack kills the uninstall hook after 30 s.
+#[cfg(windows)]
+const STOP_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Uninstall hook (WP-10): asks a running agent to restore desktop mode and
+/// exit, and waits until its pipe is gone. Returns at once if it isn't running.
+pub fn stop_agent() {
+    #[cfg(windows)]
+    match win::PipeConnector::for_current_user() {
+        Ok(connector) => stop_agent_with(&connector, STOP_TIMEOUT),
+        Err(e) => tracing::warn!("cannot reach the agent to stop it: {e}"),
+    }
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn stop_agent_with(connector: &dyn Connector, timeout: Duration) {
+    let Ok(mut conn) = connector.connect() else {
+        return;
+    };
+    // An agent of another version may refuse the handshake; ask anyway.
+    let _ = conn.handshake();
+    match conn.call(IpcRequest::Shutdown) {
+        Ok(response) => tracing::info!(?response, "asked the agent to shut down"),
+        Err(e) => tracing::warn!("shutdown request failed: {e}"),
+    }
+    drop(conn);
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if connector.connect().is_err() {
+            tracing::info!("agent stopped");
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    tracing::warn!("agent still answering after {timeout:?}; uninstalling anyway");
 }
 
 /// Opens a folder in the file manager, creating it first if needed.
@@ -310,6 +353,28 @@ mod win {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct NotRunning;
+    impl Connector for NotRunning {
+        fn connect(&self) -> io::Result<crate::client::Connection> {
+            Err(io::ErrorKind::NotFound.into())
+        }
+    }
+
+    #[test]
+    fn stop_agent_returns_at_once_when_not_running() {
+        let start = Instant::now();
+        stop_agent_with(&NotRunning, Duration::from_secs(5));
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn stop_agent_gives_up_after_timeout() {
+        let agent = crate::mock::MockConnector::new(crate::mock::MockAgent::new());
+        let start = Instant::now();
+        stop_agent_with(&agent, Duration::from_millis(300));
+        assert!(start.elapsed() >= Duration::from_millis(300));
+    }
 
     #[test]
     fn splits_uninstall_strings() {
