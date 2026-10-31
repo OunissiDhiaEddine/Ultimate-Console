@@ -50,10 +50,25 @@ impl WindowMatcher {
     }
 
     pub fn matches(&self, window: &WindowInfo) -> bool {
+        window.visible && self.identifies(window)
+    }
+
+    /// Class and title match, whether or not the window is visible. Steam can
+    /// create the Big Picture window hidden when it was minimised to the tray.
+    pub fn identifies(&self, window: &WindowInfo) -> bool {
         self.is_usable()
-            && window.visible
             && field_matches(&self.class, &window.class)
             && field_matches(&self.title, &window.title)
+    }
+
+    /// The first window that would match if it were visible, but is hidden.
+    pub fn find_hidden<'a>(
+        &self,
+        windows: impl IntoIterator<Item = &'a WindowInfo>,
+    ) -> Option<&'a WindowInfo> {
+        windows
+            .into_iter()
+            .find(|w| !w.visible && self.identifies(w))
     }
 
     /// The first matching window, in the order given (z-order for scans).
@@ -98,6 +113,18 @@ mod tests {
     fn hidden_windows_never_match() {
         let m = WindowMatcher::from_config(&Steam::default());
         assert!(!m.matches(&win("SDL_app", "Steam Big Picture Mode", false)));
+    }
+
+    #[test]
+    fn hidden_big_picture_is_found_separately() {
+        let m = WindowMatcher::from_config(&Steam::default());
+        let mut hidden = win("SDL_app", "Steam Big Picture Mode", false);
+        hidden.hwnd = 7;
+        let list = [win("SDL_app", "Game", false), hidden];
+        assert_eq!(m.find(&list), None);
+        assert_eq!(m.find_hidden(&list).map(|w| w.hwnd), Some(7));
+        let visible = [win("SDL_app", "Steam Big Picture Mode", true)];
+        assert_eq!(m.find_hidden(&visible), None);
     }
 
     #[test]
