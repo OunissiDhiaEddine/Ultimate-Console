@@ -15,8 +15,9 @@ The app ships as a [Velopack](https://velopack.io) package (plan §2.12, WP-10).
 
 1. Bump `version` in the root `Cargo.toml` (`[workspace.package]`) and run
    `cargo check` so `Cargo.lock` follows. Merge that to `main`.
-2. Tag the merge commit and push the tag:
-   `git tag v0.2.0 && git push origin v0.2.0`.
+2. Either tag the merge commit and push the tag
+   (`git tag v0.2.0 && git push origin v0.2.0`), or open *Actions → Release
+   → Run workflow* on `main` and tick **publish** (this creates the tag).
 3. `.github/workflows/release.yml` tests, builds, runs `vpk pack` (with a
    delta from the previous release) and `vpk upload github --publish`.
 
