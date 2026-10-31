@@ -3,12 +3,13 @@
 //! Each work package adds its own subcommand group here
 //! (`display`, `tv`, `shell`, `audio`, `power`, `sysinfo`, `overlay`).
 //! WP-00 provides the `uc-core` ones: `paths`, `config`, `state`, `hotkey`.
-//! WP-01 adds `display`.
+//! WP-01 adds `display`, WP-07 `overlay`.
 //!
 //! Set `UC_HOME` to point every file at a scratch folder instead of the real
 //! `%APPDATA%`/`%LOCALAPPDATA%` ones.
 
 mod display;
+mod overlay;
 mod power;
 
 use std::process::ExitCode;
@@ -69,6 +70,8 @@ enum Command {
     Power(power::PowerCmd),
     /// Android TV: discover, pair, wake, sleep, state (WP-02).
     Tv(tv::TvArgs),
+    /// Show the overlay on the desktop, toggled by its hotkey (WP-07).
+    Overlay(overlay::OverlayArgs),
 }
 
 #[derive(Subcommand)]
@@ -135,6 +138,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     match cli.command {
         Command::Power(cmd) => return power::run(cmd),
         Command::Tv(args) => return tv::run(args),
+        Command::Overlay(args) => return overlay::run(args),
         Command::Paths => {
             let p = Paths::from_env()?;
             println!("config: {}", p.config_file().display());
