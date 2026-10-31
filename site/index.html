@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ultimate Console: turn your Windows PC into a couch console</title>
+  <meta name="description" content="One hotkey hides the Windows desktop, wakes your Android TV, switches to it and launches Steam Big Picture. The same hotkey puts everything back. Free and open source.">
+  <meta name="theme-color" content="#0d1117">
+  <meta property="og:title" content="Ultimate Console">
+  <meta property="og:description" content="A console-like couch mode for Windows. One hotkey: desktop gone, TV on, Big Picture up.">
+  <meta property="og:image" content="assets/logo.png">
+  <meta property="og:type" content="website">
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="stylesheet" href="style.css">
+  <script>document.documentElement.classList.add("js")</script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="nav" id="top">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top">
+        <img src="assets/logo.png" alt="" width="32" height="32">
+        <span>Ultimate Console</span>
+      </a>
+      <nav aria-label="Main">
+        <ul class="nav-links">
+          <li><a href="#features">Features</a></li>
+          <li><a href="#how">How it works</a></li>
+          <li><a href="#install">Install</a></li>
+          <li><a href="#setup">Setup</a></li>
+          <li><a href="#help">Help</a></li>
+        </ul>
+      </nav>
+      <a class="btn btn-small btn-primary" href="https://github.com/OunissiDhiaEddine/Ultimate-Console/releases/latest/download/UltimateConsole-win-Setup.exe">Download</a>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- HERO -->
+    <section class="hero">
+      <div class="glow glow-a" aria-hidden="true"></div>
+      <div class="glow glow-b" aria-hidden="true"></div>
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow reveal">Free · Open source · Windows</p>
+          <h1 class="reveal">Your PC, <span class="grad">as a couch console.</span></h1>
+          <p class="lead reveal">
+            One hotkey hides the Windows desktop, wakes your Android TV, makes it the only
+            screen and launches Steam Big Picture. Press it again, or just exit Big Picture,
+            and your desktop, monitors and TV go back exactly how they were. No sign-out.
+          </p>
+          <div class="cta reveal">
+            <a class="btn btn-primary btn-lg" href="https://github.com/OunissiDhiaEddine/Ultimate-Console/releases/latest/download/UltimateConsole-win-Setup.exe">
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M12 3a1 1 0 0 1 1 1v9.59l3.3-3.3a1 1 0 1 1 1.4 1.42l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.42l3.3 3.3V4a1 1 0 0 1 1-1zM5 19h14a1 1 0 1 1 0 2H5a1 1 0 1 1 0-2z"/></svg>
+              Download for Windows
+            </a>
+            <a class="btn btn-ghost btn-lg" href="#install">Install guide</a>
+          </div>
+          <p class="fine reveal">
+            <span id="version-label">v0.1.0</span> · 64-bit Windows · per-user install, no admin needed ·
+            <a href="https://github.com/OunissiDhiaEddine/Ultimate-Console/releases/latest">release notes</a>
+          </p>
+        </div>
+
+        <!-- Animated TV demo -->
+        <div class="demo reveal" aria-label="Animation: pressing Ctrl+Alt+G switches the TV from the Windows desktop to a console view">
+          <div class="tv">
+            <div class="screen" id="screen" data-mode="desktop">
+              <div class="layer layer-off"></div>
+              <div class="layer layer-desktop">
+                <div class="win win-1"><i></i><i></i><i></i></div>
+                <div class="win win-2"><i></i><i></i><i></i></div>
+                <div class="taskbar"><span></span><span></span><span></span><span></span><b></b></div>
+              </div>
+              <div class="layer layer-console">
+                <div class="console-top"><span class="dot"></span><span class="bar"></span><span class="clock">21:04</span></div>
+                <div class="console-hero"></div>
+                <div class="tiles">
+                  <span></span><span></span><span></span><span></span><span></span>
+                </div>
+              </div>
+              <div class="layer layer-overlay">
+                <div class="ov-card">
+                  <div class="ov-row"><span class="ov-label">Volume</span><span class="ov-slider"><span></span></span></div>
+                  <div class="ov-grid"><span></span><span class="sel"></span><span></span></div>
+                  <div class="ov-stats"><span>CPU 34%</span><span>GPU 71%</span><span>RAM 5.2 GB</span></div>
+                </div>
+              </div>
+              <div class="toast" id="toast">Waking TV…</div>
+            </div>
+            <div class="stand"></div>
+          </div>
+          <div class="keys" aria-hidden="true">
+            <kbd data-k="ctrl">Ctrl</kbd><span class="plus">+</span><kbd data-k="alt">Alt</kbd><span class="plus">+</span><kbd data-k="last" id="demo-key">G</kbd>
+          </div>
+          <p class="demo-caption" id="demo-caption">Gaming mode</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- HOTKEY STRIP -->
+    <section class="strip">
+      <div class="wrap strip-grid">
+        <div class="hk reveal">
+          <div class="keyrow"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>G</kbd></div>
+          <p><strong>Gaming mode</strong>Enter and leave console mode.</p>
+        </div>
+        <div class="hk reveal">
+          <div class="keyrow"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>O</kbd></div>
+          <p><strong>Overlay</strong>Volume, task switcher and stats.</p>
+        </div>
+        <div class="hk reveal">
+          <div class="keyrow"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Shift</kbd><kbd>R</kbd></div>
+          <p><strong>Panic restore</strong>Always brings the desktop back.</p>
+        </div>
+      </div>
+      <p class="wrap strip-note reveal">Every shortcut can be changed in the settings app.</p>
+    </section>
+
+    <!-- FEATURES -->
+    <section class="section" id="features">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="eyebrow">Features</p>
+          <h2>Everything a console does, on the PC you already have.</h2>
+          <p class="sub">Inspired by the GameScope session on Linux handhelds and HTPCs, built natively for Windows.</p>
+        </header>
+
+        <div class="cards">
+          <article class="card reveal">
+            <div class="ic"><svg viewBox="0 0 24 24"><path d="M6 9h4M8 7v4M15 9h.01M18 11h.01M7.5 4h9A5.5 5.5 0 0 1 22 9.5v3.8a3.7 3.7 0 0 1-6.6 2.3L14 14h-4l-1.4 1.6A3.7 3.7 0 0 1 2 13.3V9.5A5.5 5.5 0 0 1 7.5 4z"/></svg></div>
+            <h3>One-key gaming mode</h3>
+            <p>Explorer, the taskbar and notifications disappear without signing you out. Steam Big Picture becomes the whole screen, the way a console boots into its dashboard.</p>
+          </article>
+          <article class="card reveal">
+            <div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div>
+            <h3>The TV becomes the screen</h3>
+            <p>Your other monitors switch off and the TV becomes the only display, at the resolution, refresh rate and HDR setting you choose. Your exact layout comes back when you leave.</p>
+          </article>
+          <article class="card reveal">
+            <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0"/></svg></div>
+            <h3>TV wakes and sleeps with you</h3>
+            <p>Your Android TV is woken over the network (ADB plus Wake-on-LAN). Put the PC to sleep from Big Picture and the TV sleeps too; wake the PC and the TV comes back on.</p>
+          </article>
+          <article class="card reveal">
+            <div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M17.5 14v7"/></svg></div>
+            <h3>Built-in overlay</h3>
+            <p>Master and per-app volume, a task switcher with live window thumbnails, and CPU, GPU and RAM for the selected game. Works with a controller.</p>
+          </article>
+          <article class="card reveal">
+            <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
+            <h3>Safe by design</h3>
+            <p>A panic hotkey, crash recovery that restores your desktop on restart, and a written list of escape hatches. You never get stuck on a black screen.</p>
+          </article>
+          <article class="card reveal">
+            <div class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></div>
+            <h3>A real settings app</h3>
+            <p>Pick your TV display, pair the TV, choose the audio output, record new hotkeys with conflict checks, and manage updates and uninstall in one place.</p>
+          </article>
+          <article class="card reveal">
+            <div class="ic"><svg viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></div>
+            <h3>Hotkeys that stay out of the way</h3>
+            <p>Defaults avoid Windows, Game Bar, NVIDIA, AMD and Steam shortcuts. When you rebind, the app rejects reserved combos and warns about AltGr clashes on AZERTY and Arabic layouts.</p>
+          </article>
+          <article class="card reveal">
+            <div class="ic"><svg viewBox="0 0 24 24"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg></div>
+            <h3>Featherweight</h3>
+            <p>Written in Rust. One small background process, no admin rights, and nothing rendered while the overlay is hidden, so it costs next to nothing while you work.</p>
+          </article>
+          <article class="card reveal">
+            <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 10v6M14 10v6"/></svg></div>
+            <h3>Clean in, clean out</h3>
+            <p>A per-user installer with a Start menu entry and automatic updates. Uninstalling restores your desktop if needed and removes everything: config, logs, keys and the startup entry.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section class="section alt" id="how">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="eyebrow">How it works</p>
+          <h2>What happens when you press <span class="nowrap"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>G</kbd></span></h2>
+        </header>
+        <ol class="timeline">
+          <li class="reveal"><span class="t-num">1</span><div><h3>Your setup is saved</h3><p>The current display layout and audio device are written to disk first, so they can always be restored, even after a crash.</p></div></li>
+          <li class="reveal"><span class="t-num">2</span><div><h3>The TV wakes up</h3><p>A Wake-on-LAN packet and an ADB wake command go to the TV. The app waits until Windows actually sees the TV before switching.</p></div></li>
+          <li class="reveal"><span class="t-num">3</span><div><h3>The TV becomes the only screen</h3><p>Other monitors turn off and the TV becomes primary, with your chosen mode and HDR. Sound can move to the TV too.</p></div></li>
+          <li class="reveal"><span class="t-num">4</span><div><h3>The desktop steps aside</h3><p>Explorer closes cleanly, without signing you out and without admin rights. No taskbar, no pop-ups.</p></div></li>
+          <li class="reveal"><span class="t-num">5</span><div><h3>Big Picture takes over</h3><p>Steam opens in Big Picture mode as your console dashboard. Grab the controller.</p></div></li>
+          <li class="reveal t-exit"><span class="t-num">↩</span><div><h3>Leaving is just as easy</h3><p>Exit Big Picture or press the hotkey again: the monitors, sound device and Explorer come back exactly as they were, and the TV turns off.</p></div></li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- INSTALL -->
+    <section class="section" id="install">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="eyebrow">Install</p>
+          <h2>Up and running in a minute.</h2>
+          <p class="sub">No admin rights and no reboot. It installs for your user only.</p>
+        </header>
+
+        <div class="steps">
+          <div class="step reveal">
+            <span class="step-n">1</span>
+            <div class="step-body">
+              <h3>Download the installer</h3>
+              <p>Get <code>UltimateConsole-win-Setup.exe</code> from the latest release.</p>
+              <div class="step-actions">
+                <a class="btn btn-primary" href="https://github.com/OunissiDhiaEddine/Ultimate-Console/releases/latest/download/UltimateConsole-win-Setup.exe">Download Setup.exe</a>
+                <a class="btn btn-ghost" href="https://github.com/OunissiDhiaEddine/Ultimate-Console/releases/latest/download/UltimateConsole-win-Portable.zip">Portable .zip</a>
+              </div>
+            </div>
+          </div>
+
+          <div class="step reveal">
+            <span class="step-n">2</span>
+            <div class="step-body">
+              <h3>Get past SmartScreen</h3>
+              <p>The installer isn't code-signed yet, so Windows may show a blue <em>"Windows protected your PC"</em> box. Click <strong>More info</strong>, then <strong>Run anyway</strong>. That's all.</p>
+              <div class="smartscreen" id="smartscreen" aria-hidden="true">
+                <div class="ss-title">Windows protected your PC</div>
+                <p class="ss-text">Microsoft Defender SmartScreen prevented an unrecognized app from starting. Running this app might put your PC at risk.</p>
+                <span class="ss-link">More info</span>
+                <div class="ss-details">
+                  <p>App: <span>UltimateConsole-win-Setup.exe</span></p>
+                  <p>Publisher: <span>Unknown publisher</span></p>
+                </div>
+                <div class="ss-buttons">
+                  <span class="ss-btn ss-run">Run anyway</span>
+                  <span class="ss-btn">Don't run</span>
+                </div>
+                <span class="cursor"></span>
+              </div>
+              <p class="note">Not sure? The whole source code is on <a href="https://github.com/OunissiDhiaEddine/Ultimate-Console">GitHub</a> and every release is built by GitHub Actions from it.</p>
+            </div>
+          </div>
+
+          <div class="step reveal">
+            <span class="step-n">3</span>
+            <div class="step-body">
+              <h3>The settings app opens</h3>
+              <p>The background agent starts right away, and from now on at every sign-in. Head to <a href="#setup">Setup</a> to point it at your TV. You'll find <strong>Ultimate Console</strong> in the Start menu any time.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="reqs reveal">
+          <h3>You'll need</h3>
+          <ul>
+            <li>A 64-bit Windows PC</li>
+            <li><a href="https://store.steampowered.com/about/">Steam</a> installed</li>
+            <li>A TV connected by HDMI</li>
+            <li>For wake and sleep: an Android TV on the same network</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- SETUP -->
+    <section class="section alt" id="setup">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="eyebrow">Setup</p>
+          <h2>Five minutes in the settings app.</h2>
+          <p class="sub">Open <strong>Ultimate Console</strong> from the Start menu. The header shows whether the agent is running, the current mode and whether the TV is reachable.</p>
+        </header>
+
+        <div class="tabs reveal" role="tablist" aria-label="Setup steps">
+          <button role="tab" aria-selected="true" aria-controls="tab-display" id="t-display">Display</button>
+          <button role="tab" aria-selected="false" aria-controls="tab-tv" id="t-tv" tabindex="-1">TV</button>
+          <button role="tab" aria-selected="false" aria-controls="tab-audio" id="t-audio" tabindex="-1">Audio</button>
+          <button role="tab" aria-selected="false" aria-controls="tab-hotkeys" id="t-hotkeys" tabindex="-1">Hotkeys</button>
+          <button role="tab" aria-selected="false" aria-controls="tab-controller" id="t-controller" tabindex="-1">Controller</button>
+        </div>
+
+        <div class="panels reveal">
+          <div class="panel" role="tabpanel" id="tab-display" aria-labelledby="t-display">
+            <ol>
+              <li>Go to the <strong>Display</strong> page. Every connected screen is listed.</li>
+              <li>Not sure which is which? Press <strong>Identify</strong> and each screen flashes its number.</li>
+              <li>Pick your TV as the <strong>TV display</strong>, then optionally its <strong>resolution</strong> and <strong>Turn HDR on while gaming</strong>. A TV that's off may not be listed: turn it on and press <strong>Refresh</strong>.</li>
+              <li>If your TV is slow to show up after waking, raise <strong>Wait for the TV to appear</strong>.</li>
+              <li>Press <strong>Save</strong>.</li>
+            </ol>
+          </div>
+          <div class="panel" role="tabpanel" id="tab-tv" aria-labelledby="t-tv" hidden>
+            <ol>
+              <li>On the TV: <em>Settings → Device preferences → About</em>, and click <strong>Build</strong> seven times to unlock Developer options.</li>
+              <li>In <em>Developer options</em>, turn on <strong>Network debugging</strong> (sometimes called <em>ADB debugging</em> or <em>Wireless debugging</em>).</li>
+              <li>If your TV has <strong>Network standby</strong> or <strong>Wake on Wi-Fi/LAN</strong>, turn it on, so it can be woken from sleep.</li>
+              <li>In the settings app's <strong>TV</strong> page tick <strong>Control the TV</strong>, press <strong>Find TV</strong> (or type its IP address), then <strong>Pair</strong>.</li>
+              <li>The TV asks <em>"Allow debugging?"</em>: tick <strong>Always allow from this computer</strong> and accept. The TV's MAC address is filled in for you.</li>
+              <li>Press <strong>Save</strong>, then try <strong>Wake</strong> and <strong>Sleep</strong>.</li>
+              <li>Want the TV to follow the PC's sleep? On the <strong>Sleep / Resume</strong> page tick <strong>Put the TV to sleep when the PC sleeps</strong> and <strong>Wake the TV when the PC wakes up</strong>.</li>
+            </ol>
+          </div>
+          <div class="panel" role="tabpanel" id="tab-audio" aria-labelledby="t-audio" hidden>
+            <ol>
+              <li>On the <strong>Audio</strong> page tick <strong>Switch the default sound output while gaming</strong>.</li>
+              <li>Pick the TV's HDMI audio device (often named after your graphics card).</li>
+              <li>Press <strong>Save</strong>. Your normal speakers or headset come back when you leave gaming mode.</li>
+            </ol>
+          </div>
+          <div class="panel" role="tabpanel" id="tab-hotkeys" aria-labelledby="t-hotkeys" hidden>
+            <ol>
+              <li>The <strong>Hotkeys</strong> page lists gaming mode, overlay and panic restore.</li>
+              <li>Press <strong>Record</strong> and type the new shortcut. <kbd>Esc</kbd> cancels.</li>
+              <li>The app checks it on the spot: shortcuts reserved by Windows, already used by another program, the same as another hotkey, or that type a character with AltGr are flagged.</li>
+              <li><strong>Reset</strong> brings back the default. Press <strong>Save</strong> when everything says OK.</li>
+            </ol>
+          </div>
+          <div class="panel" role="tabpanel" id="tab-controller" aria-labelledby="t-controller" hidden>
+            <ol>
+              <li>In Steam open <em>Settings → Controller → Guide Button Chord Layout</em>.</li>
+              <li>Add a chord you like (for example <strong>Guide + Y</strong>) that sends the keyboard shortcut <kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>O</kbd>.</li>
+              <li>Now the overlay opens from the couch. Navigate it with the stick or D-pad, no keyboard needed.</li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="play reveal">
+          <div>
+            <h3>Ready? Press <span class="nowrap"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>G</kbd></span></h3>
+            <p>Or use <strong>Enter gaming mode</strong> at the top of the settings app. To leave, exit Big Picture or press it again.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- HELP -->
+    <section class="section" id="help">
+      <div class="wrap">
+        <header class="section-head reveal">
+          <p class="eyebrow">Help</p>
+          <h2>Getting your desktop back, always.</h2>
+          <p class="sub">Gaming mode closes Explorer, so here's what to do if something goes wrong, in order.</p>
+        </header>
+        <div class="faq">
+          <details class="reveal" open>
+            <summary>1. Press the panic hotkey</summary>
+            <p><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Shift</kbd><kbd>R</kbd> restores the display layout, audio device and Explorer from any state.</p>
+          </details>
+          <details class="reveal">
+            <summary>2. Exit Big Picture</summary>
+            <p>Use Steam's menu to exit Big Picture. The agent notices and restores everything.</p>
+          </details>
+          <details class="reveal">
+            <summary>3. Restart the agent, or sign out and back in</summary>
+            <p>If the agent crashed mid-game, Windows restarts it and it restores your desktop on its own. Signing out and back in does the same.</p>
+          </details>
+          <details class="reveal">
+            <summary>4. Start Explorer by hand</summary>
+            <p>Press <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>Esc</kbd> to open Task Manager, choose <em>Run new task</em>, type <code>explorer</code> and press OK. The taskbar comes back.</p>
+          </details>
+          <details class="reveal">
+            <summary>5. Monitors still off?</summary>
+            <p>Press <kbd>Win</kbd><kbd>P</kbd> and pick <em>Extend</em> or <em>PC screen only</em>, or run <code>displayswitch /extend</code> from Task Manager.</p>
+          </details>
+          <details class="reveal">
+            <summary>How do I uninstall?</summary>
+            <p><em>Settings → Apps → Installed apps → Ultimate Console → Uninstall</em>, or the <strong>Uninstall</strong> button in the settings app. It restores the desktop if needed and deletes everything it created.</p>
+          </details>
+          <details class="reveal">
+            <summary>The overlay doesn't show over my game</summary>
+            <p>Overlays can't draw over <em>exclusive fullscreen</em>. Switch the game to borderless or windowed fullscreen (most modern games already are). Games running as administrator also can't be controlled from the overlay.</p>
+          </details>
+          <details class="reveal">
+            <summary>Where are the settings and logs?</summary>
+            <p>Config: <code>%APPDATA%\UltimateConsole\config.toml</code>. Logs (kept 7 days): <code>%LOCALAPPDATA%\UltimateConsole\logs\</code>. The settings app's <strong>About</strong> page has an <strong>Open logs folder</strong> button.</p>
+          </details>
+        </div>
+        <p class="more reveal">Found a bug or have an idea? <a href="https://github.com/OunissiDhiaEddine/Ultimate-Console/issues">Open an issue on GitHub</a>.</p>
+      </div>
+    </section>
+
+    <!-- SUPPORT -->
+    <section class="section support-section">
+      <div class="wrap">
+        <div class="support reveal">
+          <div class="coffee" aria-hidden="true">
+            <span class="steam s1"></span><span class="steam s2"></span><span class="steam s3"></span>
+            <svg viewBox="0 0 64 64"><path d="M10 24h36v14a16 16 0 0 1-16 16h-4A16 16 0 0 1 10 38z" fill="currentColor"/><path d="M46 28h4a7 7 0 0 1 0 14h-5" fill="none" stroke="currentColor" stroke-width="4"/></svg>
+          </div>
+          <div class="support-copy">
+            <h2>Enjoying it?</h2>
+            <p>Ultimate Console is free and built in spare time. If it made your couch a better place, a coffee keeps it going.</p>
+          </div>
+          <a class="btn btn-coffee btn-lg" href="https://buymeacoffee.com/dhiaeddine" target="_blank" rel="noopener">Buy me a coffee</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <div class="brand">
+        <img src="assets/logo.png" alt="" width="24" height="24">
+        <span>Ultimate Console</span>
+      </div>
+      <ul>
+        <li><a href="https://github.com/OunissiDhiaEddine/Ultimate-Console">GitHub</a></li>
+        <li><a href="https://github.com/OunissiDhiaEddine/Ultimate-Console/releases">Releases</a></li>
+        <li><a href="https://buymeacoffee.com/dhiaeddine" target="_blank" rel="noopener">Buy me a coffee</a></li>
+      </ul>
+      <p class="fine">MIT licensed · Made by Dhia. Not affiliated with Valve or Microsoft. Steam and Big Picture are trademarks of Valve Corporation.</p>
+    </div>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>
