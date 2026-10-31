@@ -22,6 +22,10 @@
 //!    `config.overlay.sample_interval_ms`. The system line is in the footer
 //!    of every panel.
 //!
+//! A separate small **volume popup** ([`osd`]) shows the master volume for a
+//! couple of seconds when [`Overlay::volume_key`] is called (volume keys in
+//! gaming mode, where Explorer doesn't handle them).
+//!
 //! Navigation: arrows / D-pad / left stick, Tab / LB / RB between panels,
 //! Esc / B closes, `+` `-` / triggers change the master volume, M mutes.
 //!
@@ -35,6 +39,7 @@ pub mod anim;
 pub mod gamepad;
 pub mod layout;
 pub mod model;
+pub mod osd;
 pub mod tasks;
 
 #[cfg(windows)]
@@ -43,6 +48,7 @@ mod win;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub use osd::VolumeKey;
 use uc_audio::AudioControl;
 use uc_sysinfo::StatsSource;
 
@@ -138,6 +144,7 @@ impl Overlay {
     pub fn show(&self) {}
     pub fn hide(&self) {}
     pub fn toggle(&self) {}
+    pub fn volume_key(&self, _key: VolumeKey) {}
     pub fn set_config(&self, _config: &uc_core::Config) {}
     pub fn is_visible(&self) -> bool {
         false

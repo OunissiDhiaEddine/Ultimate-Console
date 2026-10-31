@@ -1,5 +1,6 @@
 //! The overlay window, its UI thread and the handle other threads use.
 
+mod osd;
 mod render;
 mod system;
 mod thumbs;
@@ -30,6 +31,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::w;
 
+use self::osd::{Osd, TIMER_OSD_FRAME, TIMER_OSD_HIDE};
 use self::render::Gfx;
 use self::system::Pads;
 use self::thumbs::Thumbs;
@@ -37,6 +39,7 @@ use crate::anim::{FADE_IN, FADE_OUT, Fade};
 use crate::gamepad::Gamepad;
 use crate::layout::{Hit, Layout};
 use crate::model::{Action, Effect, Master, Model, Tab, Volume};
+use crate::osd::VolumeKey;
 use crate::{Backends, Error, Result, Settings};
 
 const WM_APP_SHOW: u32 = WM_APP + 1;
@@ -44,6 +47,8 @@ const WM_APP_HIDE: u32 = WM_APP + 2;
 const WM_APP_TOGGLE: u32 = WM_APP + 3;
 const WM_APP_SETTINGS: u32 = WM_APP + 4;
 const WM_APP_QUIT: u32 = WM_APP + 5;
+/// wparam: [`VolumeKey::to_raw`].
+const WM_APP_VOLUME_KEY: u32 = WM_APP + 6;
 
 const TIMER_FRAME: usize = 1;
 const TIMER_SAMPLE: usize = 2;
@@ -95,10 +100,14 @@ impl Overlay {
     }
 
     fn post(&self, msg: u32) {
+        self.post_with(msg, 0);
+    }
+
+    fn post_with(&self, msg: u32, wparam: usize) {
         // SAFETY: posting to a window owned by our UI thread; if it is gone
         // the call just fails.
         if let Err(e) =
-            unsafe { PostMessageW(Some(HWND(self.hwnd as _)), msg, WPARAM(0), LPARAM(0)) }
+            unsafe { PostMessageW(Some(HWND(self.hwnd as _)), msg, WPARAM(wparam), LPARAM(0)) }
         {
             tracing::warn!("posting to the overlay failed: {e}");
         }
@@ -114,6 +123,14 @@ impl Overlay {
 
     pub fn toggle(&self) {
         self.post(WM_APP_TOGGLE);
+    }
+
+    /// A volume key was pressed (the agent registers them in gaming mode,
+    /// where Explorer isn't there to handle them). Changes the master volume
+    /// and shows the volume popup for a couple of seconds; if the overlay is
+    /// open, moves its master slider instead.
+    pub fn volume_key(&self, key: VolumeKey) {
+        self.post_with(WM_APP_VOLUME_KEY, key.to_raw());
     }
 
     /// Pick up a changed config (sampling interval).
@@ -271,6 +288,8 @@ struct State {
     stats: Option<Box<dyn uc_sysinfo::StatsSource>>,
     pads: Pads,
     gamepad: Gamepad,
+    /// The volume popup; `None` if its window could not be created.
+    osd: Option<Osd>,
 }
 
 impl State {
@@ -281,6 +300,13 @@ impl State {
         backends: Backends,
     ) -> Self {
         let layout = Layout::new(1920.0, 1080.0);
+        let osd = match Osd::new(hwnd, backends.audio.clone()) {
+            Ok(o) => Some(o),
+            Err(e) => {
+                tracing::error!("volume popup unavailable: {e}");
+                None
+            }
+        };
         Self {
             hwnd,
             visible,
@@ -302,6 +328,7 @@ impl State {
             stats: None,
             pads: Pads::new(),
             gamepad: Gamepad::default(),
+            osd,
         }
     }
 
@@ -318,14 +345,26 @@ impl State {
                     self.start_sample_timer();
                 }
             }
+            WM_APP_VOLUME_KEY => {
+                if let Some(key) = VolumeKey::from_raw(wp.0) {
+                    self.volume_key(key);
+                }
+            }
             WM_APP_QUIT => {
                 self.finish_hide();
+                // Its window must go before the thread ends.
+                self.osd = None;
                 // SAFETY: destroying our own window on its thread.
                 let _ = unsafe { DestroyWindow(self.hwnd) };
             }
             WM_TIMER => match wp.0 {
                 TIMER_FRAME => self.frame(),
                 TIMER_SAMPLE => self.sample(),
+                TIMER_OSD_FRAME | TIMER_OSD_HIDE => {
+                    if let Some(o) = &mut self.osd {
+                        o.on_timer(wp.0);
+                    }
+                }
                 TIMER_REFRESH => {
                     // SAFETY: killing our own one-shot timer.
                     let _ = unsafe { KillTimer(Some(self.hwnd), TIMER_REFRESH) };
@@ -415,6 +454,9 @@ impl State {
             }
             Phase::Hidden => {}
         }
+        if let Some(o) = &mut self.osd {
+            o.close();
+        }
         // SAFETY: plain FFI call.
         self.previous = unsafe { GetForegroundWindow() };
         self.last_opacity = 0.0;
@@ -456,6 +498,22 @@ impl State {
         self.start_sample_timer();
         self.visible.store(true, Ordering::Relaxed);
         tracing::info!("overlay shown");
+    }
+
+    fn volume_key(&mut self, key: VolumeKey) {
+        if self.phase == Phase::Shown {
+            // The overlay is open: move its master slider, which shows the
+            // new level right there.
+            self.act(match key {
+                VolumeKey::Up => Action::VolumeUp,
+                VolumeKey::Down => Action::VolumeDown,
+                VolumeKey::Mute => Action::ToggleMute,
+            });
+        } else if let Some(o) = &mut self.osd {
+            o.key(key);
+        } else {
+            tracing::warn!(?key, "volume key ignored: the volume popup failed to start");
+        }
     }
 
     fn start_sample_timer(&self) {

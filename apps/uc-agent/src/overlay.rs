@@ -6,7 +6,7 @@
 //! its own UI thread.
 
 use uc_core::Config;
-use uc_overlay::Overlay;
+use uc_overlay::{Overlay, VolumeKey};
 
 pub struct OverlayHost {
     /// `None` if the overlay could not start; the agent still does
@@ -35,6 +35,15 @@ impl OverlayHost {
         }
     }
 
+    /// A volume key in gaming mode: change the volume and show the volume
+    /// popup. Without the overlay, still change the volume.
+    pub fn volume_key(&self, key: VolumeKey) {
+        match &self.overlay {
+            Some(o) => o.volume_key(key),
+            None => volume_without_overlay(key),
+        }
+    }
+
     /// Hides it if shown (e.g. when gaming mode ends).
     pub fn hide(&self) {
         if let Some(o) = &self.overlay
@@ -50,3 +59,19 @@ impl OverlayHost {
         }
     }
 }
+
+#[cfg(windows)]
+fn volume_without_overlay(key: VolumeKey) {
+    use uc_audio::{AudioControl, CoreAudio};
+    let result = CoreAudio::new().and_then(|a| {
+        let (level, muted) = key.apply(a.volume()?, a.muted()?);
+        a.set_volume(level)?;
+        a.set_muted(muted)
+    });
+    if let Err(e) = result {
+        tracing::warn!(?key, "volume key failed: {e}");
+    }
+}
+
+#[cfg(not(windows))]
+fn volume_without_overlay(_key: VolumeKey) {}
