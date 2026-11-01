@@ -757,6 +757,16 @@ fn restore_hdr(t: &Topology) {
     }
 }
 
+/// How many times [`restore`] applies the layout before giving up on it.
+const RESTORE_ATTEMPTS: u32 = 3;
+/// Pause between restore attempts: the driver is often still settling
+/// right after the TV mode was in use.
+const RESTORE_RETRY_DELAY: Duration = Duration::from_millis(1000);
+/// How long a restored layout must hold before it counts. Windows sometimes
+/// re-applies its saved layout a moment after a switch, which put the
+/// picture back on the TV.
+const RESTORE_SETTLE: Duration = Duration::from_millis(1500);
+
 pub fn restore(saved: &Topology) -> Result<RestoreOutcome> {
     saved.check()?;
     let mut t = saved.clone();
@@ -764,59 +774,163 @@ pub fn restore(saved: &Topology) -> Result<RestoreOutcome> {
     // again after the layout change for the ones that just came back.
     restore_hdr(&t);
 
-    let mut try_exact = || {
-        Config::query(QDC_ALL_PATHS).and_then(|now| {
-            t.remap_adapters(&now.adapters())?;
-            let paths: Vec<_> = t.paths.iter().map(path_to).collect();
-            let modes: Vec<_> = t.modes.iter().map(mode_to).collect();
-            set_config(
-                &paths,
-                &modes,
-                SDC_APPLY
-                    | SDC_USE_SUPPLIED_DISPLAY_CONFIG
-                    | SDC_SAVE_TO_DATABASE
-                    | SDC_ALLOW_CHANGES,
-            )
-        })
-    };
-    // ERROR_GEN_FAILURE (31) shows up now and then right after the TV mode
-    // was in use (the driver is still settling); a second try usually works.
-    let exact = try_exact().or_else(|e| {
-        debug!("exact topology restore failed ({e}); retrying once");
-        std::thread::sleep(Duration::from_millis(750));
-        try_exact()
+    let mut last_err = None;
+    for attempt in 1..=RESTORE_ATTEMPTS {
+        if attempt > 1 {
+            std::thread::sleep(RESTORE_RETRY_DELAY);
+        }
+        let outcome = match restore_once(&mut t) {
+            Ok(o) => o,
+            Err(e) => {
+                warn!(attempt, "display restore failed: {e}");
+                last_err = Some(e);
+                continue;
+            }
+        };
+        // Verify, like applying the layout twice by hand: the call can
+        // succeed while Windows puts its saved layout back right after.
+        if !restored(&t) {
+            warn!(
+                attempt,
+                ?outcome,
+                "layout applied but the saved displays are not active; applying again"
+            );
+            continue;
+        }
+        std::thread::sleep(RESTORE_SETTLE);
+        if !restored(&t) {
+            warn!(
+                attempt,
+                ?outcome,
+                "Windows switched the layout back; applying again"
+            );
+            continue;
+        }
+        restore_hdr(&t);
+        info!(attempt, ?outcome, "display topology restored");
+        return Ok(outcome);
+    }
+
+    // Last resort: every connected display on, so at least the monitor shows
+    // a picture.
+    warn!("could not bring the saved layout back; extending all displays");
+    match set_config(
+        &[],
+        &[],
+        SDC_APPLY | SDC_TOPOLOGY_EXTEND | SDC_SAVE_TO_DATABASE,
+    ) {
+        Ok(()) => {
+            restore_hdr(&t);
+            info!(outcome = ?RestoreOutcome::Extend, "display topology restored");
+            Ok(RestoreOutcome::Extend)
+        }
+        Err(e) => Err(last_err.unwrap_or(e)),
+    }
+}
+
+/// One restore pass: the exact saved layout, or, if Windows refuses it,
+/// the saved displays turned back on with modes of Windows' choosing. Both
+/// save to Windows' display database, which holds the TV-only layout while
+/// gaming; leaving that there lets Windows switch back to the TV later.
+fn restore_once(t: &mut Topology) -> Result<RestoreOutcome> {
+    let exact = Config::query(QDC_ALL_PATHS).and_then(|now| {
+        t.remap_adapters(&now.adapters())?;
+        let paths: Vec<_> = t.paths.iter().map(path_to).collect();
+        let modes: Vec<_> = t.modes.iter().map(mode_to).collect();
+        set_config(
+            &paths,
+            &modes,
+            SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_SAVE_TO_DATABASE | SDC_ALLOW_CHANGES,
+        )
     });
-    let outcome = match exact {
-        Ok(()) => RestoreOutcome::Exact,
+    match exact {
+        Ok(()) => Ok(RestoreOutcome::Exact),
         Err(e) => {
-            warn!("exact topology restore failed ({e}); asking for the saved topology");
-            // Windows' database holds the TV-only layout while gaming (it is
-            // saved so that a game resetting the display mode can't bring
-            // the monitor back), so first supply the saved topology and let
-            // Windows pick the modes.
-            let paths: Vec<_> = t
-                .paths
-                .iter()
-                .map(|p| {
-                    let mut p = path_to(p);
-                    p.sourceInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
-                    p.targetInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
-                    p
-                })
-                .collect();
-            match set_config(&paths, &[], SDC_APPLY | SDC_TOPOLOGY_SUPPLIED) {
-                Ok(()) => RestoreOutcome::Database,
-                Err(e) => {
-                    warn!("saved topology refused ({e}); extending all displays");
-                    set_config(&[], &[], SDC_APPLY | SDC_TOPOLOGY_EXTEND)?;
-                    RestoreOutcome::Extend
+            warn!("exact topology restore failed ({e}); turning the saved displays back on");
+            activate_saved(t)?;
+            Ok(RestoreOutcome::Database)
+        }
+    }
+}
+
+/// Makes the saved displays the active ones, found by identity in the
+/// current configuration (like [`apply_single`] finds the TV), with modes
+/// left to Windows. Then puts each one's saved resolution back.
+fn activate_saved(t: &Topology) -> Result<()> {
+    let all = Config::query(QDC_ALL_PATHS)?;
+    let targets = targets(&all);
+    let mut paths = Vec::new();
+    let mut wanted = Vec::new();
+    for p in &t.paths {
+        let target = find_target(&targets, &p.display)?;
+        // Keep the saved source where the current config offers it, so
+        // displays of an extended desktop don't end up sharing one source.
+        let i = all
+            .paths
+            .iter()
+            .position(|c| {
+                luid_from(c.targetInfo.adapterId) == target.adapter
+                    && c.targetInfo.id == target.id
+                    && c.sourceInfo.id == p.source.id
+            })
+            .unwrap_or(target.path);
+        let mut path = all.paths[i];
+        path.flags = DISPLAYCONFIG_PATH_ACTIVE;
+        path.sourceInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
+        path.targetInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
+        paths.push(path);
+        wanted.push((target.adapter, target.id, saved_resolution(t, p)));
+    }
+    if let Err(e) = set_config(
+        &paths,
+        &[],
+        SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES | SDC_SAVE_TO_DATABASE,
+    ) {
+        warn!("supplied layout refused ({e}); trying TOPOLOGY_SUPPLIED");
+        set_config(
+            &paths,
+            &[],
+            SDC_APPLY | SDC_TOPOLOGY_SUPPLIED | SDC_ALLOW_CHANGES,
+        )?;
+    }
+    for (adapter, target_id, res) in wanted {
+        let Some((width, height)) = res else { continue };
+        let mode = DisplayMode {
+            width,
+            height,
+            refresh_hz: None,
+        };
+        match active_source_name(adapter, target_id) {
+            Ok(name) => {
+                if let Err(e) = set_mode(&name, &mode) {
+                    debug!("saved resolution {width}x{height} not set: {e}");
                 }
             }
+            Err(e) => debug!("saved resolution not set: {e}"),
         }
+    }
+    Ok(())
+}
+
+/// The desktop resolution a saved path had.
+fn saved_resolution(t: &Topology, p: &PathEntry) -> Option<(u32, u32)> {
+    match t.modes.get(p.source.mode_idx as usize)? {
+        ModeEntry::Source { width, height, .. } => Some((*width, *height)),
+        _ => None,
+    }
+}
+
+/// True when exactly the saved displays are active.
+fn restored(t: &Topology) -> bool {
+    let Ok(cfg) = Config::query(QDC_ALL_PATHS) else {
+        return false;
     };
-    restore_hdr(&t);
-    info!(?outcome, "display topology restored");
-    Ok(outcome)
+    let targets = targets(&cfg);
+    let active = targets.iter().filter(|x| x.active).count();
+    active == t.paths.len()
+        && t.paths
+            .iter()
+            .all(|p| find_target(&targets, &p.display).is_ok_and(|x| x.active))
 }
 
 pub fn apply_single(
