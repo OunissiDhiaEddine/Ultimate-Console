@@ -32,8 +32,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetMessageW,
     GetWindowLongPtrW, MSG, PostMessageW, PostQuitMessage, RegisterClassW, SendMessageW,
-    SetWindowLongPtrW, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY, WM_HOTKEY,
-    WM_POWERBROADCAST, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    SetWindowLongPtrW, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY,
+    WM_DISPLAYCHANGE, WM_HOTKEY, WM_POWERBROADCAST, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 
@@ -441,6 +442,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 state.on_hotkey(action);
             } else if let Some(key) = volume_key_from_id(id) {
                 state.overlay.volume_key(key);
+            }
+            Some(LRESULT(0))
+        }
+        WM_DISPLAYCHANGE => {
+            let (w, h) = (lparam.0 & 0xffff, (lparam.0 >> 16) & 0xffff);
+            tracing::info!(
+                width = w,
+                height = h,
+                bpp = wparam.0,
+                "display configuration changed"
+            );
+            if state.shared.mode() == uc_core::state::Mode::Gaming {
+                let _ = state.commands.send(Command::DisplayChanged);
             }
             Some(LRESULT(0))
         }

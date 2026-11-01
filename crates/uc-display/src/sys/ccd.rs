@@ -18,12 +18,12 @@ use windows::Win32::Devices::Display::{
     DISPLAYCONFIG_VIDEO_SIGNAL_INFO, DisplayConfigGetDeviceInfo, DisplayConfigSetDeviceInfo,
     GetDisplayConfigBufferSizes, QDC_ALL_PATHS, QDC_ONLY_ACTIVE_PATHS, QUERY_DISPLAY_CONFIG_FLAGS,
     QueryDisplayConfig, SDC_ALLOW_CHANGES, SDC_APPLY, SDC_SAVE_TO_DATABASE, SDC_TOPOLOGY_EXTEND,
-    SDC_TOPOLOGY_SUPPLIED, SDC_USE_DATABASE_CURRENT, SDC_USE_SUPPLIED_DISPLAY_CONFIG,
-    SET_DISPLAY_CONFIG_FLAGS, SetDisplayConfig,
+    SDC_TOPOLOGY_SUPPLIED, SDC_USE_SUPPLIED_DISPLAY_CONFIG, SET_DISPLAY_CONFIG_FLAGS,
+    SetDisplayConfig,
 };
 use windows::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, LUID, POINTL, RECTL};
 use windows::Win32::Graphics::Gdi::{
-    CDS_TYPE, ChangeDisplaySettingsExW, DEVMODEW, DISP_CHANGE_SUCCESSFUL,
+    CDS_UPDATEREGISTRY, ChangeDisplaySettingsExW, DEVMODEW, DISP_CHANGE_SUCCESSFUL,
     DISPLAYCONFIG_PATH_ACTIVE, DISPLAYCONFIG_PATH_MODE_IDX_INVALID, DM_DISPLAYFREQUENCY,
     DM_PELSHEIGHT, DM_PELSWIDTH, ENUM_CURRENT_SETTINGS, ENUM_DISPLAY_SETTINGS_MODE,
     EnumDisplaySettingsW,
@@ -392,13 +392,14 @@ fn set_mode(gdi_name: &[u16], mode: &DisplayMode) -> Result<()> {
         dm.dmFields |= DM_DISPLAYFREQUENCY;
     }
     // SAFETY: `gdi_name` is NUL-terminated and `dm` is a filled DEVMODEW.
-    // Flags 0: change it for now, don't persist.
+    // CDS_UPDATEREGISTRY: persisted, so a game that resets the display
+    // mode on exit (ChangeDisplaySettings(NULL)) lands on this one.
     let r = unsafe {
         ChangeDisplaySettingsExW(
             PCWSTR(gdi_name.as_ptr()),
             Some(&dm),
             None,
-            CDS_TYPE(0),
+            CDS_UPDATEREGISTRY,
             None,
         )
     };
@@ -788,11 +789,25 @@ pub fn restore(saved: &Topology) -> Result<RestoreOutcome> {
     let outcome = match exact {
         Ok(()) => RestoreOutcome::Exact,
         Err(e) => {
-            warn!("exact topology restore failed ({e}); using Windows' saved layout");
-            match set_config(&[], &[], SDC_APPLY | SDC_USE_DATABASE_CURRENT) {
+            warn!("exact topology restore failed ({e}); asking for the saved topology");
+            // Windows' database holds the TV-only layout while gaming (it is
+            // saved so that a game resetting the display mode can't bring
+            // the monitor back), so first supply the saved topology and let
+            // Windows pick the modes.
+            let paths: Vec<_> = t
+                .paths
+                .iter()
+                .map(|p| {
+                    let mut p = path_to(p);
+                    p.sourceInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
+                    p.targetInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
+                    p
+                })
+                .collect();
+            match set_config(&paths, &[], SDC_APPLY | SDC_TOPOLOGY_SUPPLIED) {
                 Ok(()) => RestoreOutcome::Database,
                 Err(e) => {
-                    warn!("database restore failed ({e}); extending all displays");
+                    warn!("saved topology refused ({e}); extending all displays");
                     set_config(&[], &[], SDC_APPLY | SDC_TOPOLOGY_EXTEND)?;
                     RestoreOutcome::Extend
                 }
@@ -814,9 +829,10 @@ pub fn apply_single(
     let target = find_target(&targets, want)?;
     let matched = target.display.clone();
     let (adapter, target_id) = (target.adapter, target.id);
-    info!(display = %identity::describe(&matched), "switching to single display");
-
-    if !is_single_active(adapter, target_id)? {
+    if is_single_active(adapter, target_id)? {
+        debug!(display = %identity::describe(&matched), "already the only active display");
+    } else {
+        info!(display = %identity::describe(&matched), "switching to single display");
         activate_only(&all, target)?;
     }
 
@@ -941,7 +957,10 @@ fn activate_only(all: &Config, target: &Target) -> Result<()> {
             match set_config(
                 &[path],
                 &modes,
-                SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES,
+                SDC_APPLY
+                    | SDC_USE_SUPPLIED_DISPLAY_CONFIG
+                    | SDC_ALLOW_CHANGES
+                    | SDC_SAVE_TO_DATABASE,
             ) {
                 Ok(()) => return Ok(()),
                 Err(e) => warn!("keeping current modes failed ({e}); letting Windows pick"),
@@ -958,7 +977,7 @@ fn activate_only(all: &Config, target: &Target) -> Result<()> {
     match set_config(
         &[path],
         &[],
-        SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES,
+        SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES | SDC_SAVE_TO_DATABASE,
     ) {
         Ok(()) => Ok(()),
         // 3. Some drivers want the database to fill in the modes.
