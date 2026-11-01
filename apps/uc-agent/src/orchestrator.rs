@@ -484,6 +484,20 @@ impl<P: Platform> Orchestrator<P> {
         }
     }
 
+    /// Windows changed the display layout while gaming: a game or Steam
+    /// resetting the display mode, the TV's HDMI link renegotiating. Puts
+    /// the TV-only layout back if it is gone (a no-op when it is intact).
+    pub fn on_display_changed(&mut self) {
+        if self.state.mode != Mode::Gaming {
+            return;
+        }
+        let display = self.config.display.clone();
+        if let Err(e) = self.platform.apply_display(&display) {
+            self.shared
+                .report_error(format!("could not put the picture back on the TV: {e}"));
+        }
+    }
+
     /// After resume in gaming mode: network, TV, display, focus (plan §2.7).
     pub fn on_resume(&mut self) {
         if self.state.mode != Mode::Gaming {
@@ -924,6 +938,17 @@ pub(crate) mod tests {
         r.orch.recheck_big_picture();
         assert!(r.orch.bp_unsure_since.is_none());
         assert_eq!(r.orch.mode(), Mode::Gaming);
+    }
+
+    #[test]
+    fn display_changes_reapply_the_tv_only_in_gaming_mode() {
+        let mut r = rig(configured(), Fake::default());
+        r.orch.on_display_changed();
+        assert!(r.calls().is_empty());
+        r.orch.enter().unwrap();
+        r.calls();
+        r.orch.on_display_changed();
+        assert_eq!(r.calls(), ["apply_display"]);
     }
 
     #[test]

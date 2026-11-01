@@ -40,6 +40,8 @@ pub enum Command {
     Exit,
     BigPictureClosed,
     Resumed,
+    /// Windows reported a display change (WM_DISPLAYCHANGE) in gaming mode.
+    DisplayChanged,
     SetConfig(Box<Config>, Sender<IpcResponse>),
     /// Restore desktop, answer, then stop (uninstaller, settings app).
     Shutdown(Sender<IpcResponse>),
@@ -153,6 +155,7 @@ impl Service {
             }
             Command::BigPictureClosed => self.orch.on_big_picture_closed(),
             Command::Resumed => self.orch.on_resume(),
+            Command::DisplayChanged => self.orch.on_display_changed(),
             Command::SetConfig(config, reply) => {
                 let _ = reply.send(self.set_config(*config));
             }
