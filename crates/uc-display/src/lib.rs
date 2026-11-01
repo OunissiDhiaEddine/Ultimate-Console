@@ -44,8 +44,8 @@ pub struct ApplyOutcome {
 pub enum RestoreOutcome {
     /// The saved topology was applied as is.
     Exact,
-    /// The exact restore failed; Windows' saved layout for the connected
-    /// displays was applied instead.
+    /// The exact restore failed; the saved displays were turned back on
+    /// with modes picked by Windows, then given their saved resolution.
     Database,
     /// Both failed; every connected display was extended.
     Extend,
@@ -62,8 +62,10 @@ pub fn snapshot() -> Result<Topology> {
     sys::snapshot()
 }
 
-/// Puts a saved layout back, falling back to Windows' own saved layout and
-/// then to "extend" if the exact restore is refused (plan §2.4).
+/// Puts a saved layout back, falling back to turning the saved displays on
+/// with Windows' modes and then to "extend" if the exact restore is refused
+/// (plan §2.4). Each pass is verified and repeated if Windows switches the
+/// layout back, and the result is saved to Windows' display database.
 pub fn restore(topology: &Topology) -> Result<RestoreOutcome> {
     sys::restore(topology)
 }
