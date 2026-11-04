@@ -38,7 +38,7 @@ use self::thumbs::Thumbs;
 use crate::anim::{FADE_IN, FADE_OUT, Fade};
 use crate::gamepad::Gamepad;
 use crate::layout::{Hit, Layout};
-use crate::model::{Action, Effect, Master, Model, Tab, Volume};
+use crate::model::{Action, Effect, Master, Model, Outputs, Tab, Volume};
 use crate::osd::VolumeKey;
 use crate::{Backends, Error, Result, Settings};
 
@@ -428,6 +428,7 @@ impl State {
         self.layout = Layout::new(w as f32 / self.scale, h as f32 / self.scale);
         self.model.columns = self.layout.columns;
         self.model.ensure_visible(self.layout.visible_rows());
+        self.model.display = system::display_mode(self.hwnd);
         self.gfx = None;
         match Gfx::new(self.hwnd, self.size.0, self.size.1, dpi) {
             Ok(g) => {
@@ -476,8 +477,11 @@ impl State {
         }
         self.stats = Some((self.backends.stats)());
         self.model.reset();
+        // Start from an empty list so the cursor lands on the default device.
+        self.model.set_outputs(Outputs::default());
         self.refresh_tasks();
         self.refresh_volume();
+        self.refresh_outputs();
         self.refresh_stats();
 
         self.phase = Phase::Shown;
@@ -632,7 +636,9 @@ impl State {
     fn sample(&mut self) {
         self.refresh_tasks();
         self.refresh_volume();
+        self.refresh_outputs();
         self.refresh_stats();
+        self.model.display = system::display_mode(self.hwnd);
     }
 
     fn refresh_tasks(&mut self) {
@@ -680,6 +686,27 @@ impl State {
         self.dirty = true;
     }
 
+    fn refresh_outputs(&mut self) {
+        let outputs = match &self.audio {
+            None => Outputs {
+                error: self.audio_error.clone(),
+                ..Outputs::default()
+            },
+            Some(a) => match a.outputs() {
+                Ok(devices) => Outputs {
+                    devices,
+                    error: None,
+                },
+                Err(e) => Outputs {
+                    error: Some(e.to_string()),
+                    ..Outputs::default()
+                },
+            },
+        };
+        self.model.set_outputs(outputs);
+        self.dirty = true;
+    }
+
     fn act(&mut self, action: Action) {
         if self.phase != Phase::Shown {
             return;
@@ -713,6 +740,15 @@ impl State {
                 self.audio_call(|a| a.set_app_volume(pid, level))
             }
             Effect::SetAppMuted { pid, muted } => self.audio_call(|a| a.set_app_muted(pid, muted)),
+            Effect::SetDefaultOutput(id) => {
+                self.audio_call(|a| a.set_default_output(&id));
+                if let Some(Ok(Some(d))) = self.audio.as_ref().map(|a| a.default_output()) {
+                    tracing::info!(device = %d.name, "default output switched from the overlay");
+                }
+                // The master volume and app sessions now belong to the new device.
+                self.refresh_outputs();
+                self.refresh_volume();
+            }
         }
     }
 
@@ -720,7 +756,7 @@ impl State {
         if let Some(a) = &self.audio
             && let Err(e) = f(a.as_ref())
         {
-            tracing::warn!("overlay volume change failed: {e}");
+            tracing::warn!("overlay audio change failed: {e}");
         }
     }
 
@@ -764,7 +800,7 @@ fn key_action(vk: VIRTUAL_KEY) -> Option<Action> {
         VK_OEM_PLUS | VK_ADD => Action::VolumeUp,
         VK_OEM_MINUS | VK_SUBTRACT => Action::VolumeDown,
         VIRTUAL_KEY(k) if k == u16::from(b'M') => Action::ToggleMute,
-        VIRTUAL_KEY(k) if (u16::from(b'1')..=u16::from(b'3')).contains(&k) => {
+        VIRTUAL_KEY(k) if (u16::from(b'1')..=u16::from(b'4')).contains(&k) => {
             Action::SelectTab(usize::from(k - u16::from(b'1')))
         }
         _ => return None,
