@@ -96,7 +96,42 @@ fn main() -> ExitCode {
         }
     };
 
+    // Direct3D 12 first on Windows; OpenGL if the PC has no usable D3D12.
+    let result = match run_ui(preferred_renderer(), &connector, mock) {
+        #[cfg(windows)]
+        Err(e) => {
+            tracing::warn!("Direct3D 12 renderer failed ({e}); falling back to OpenGL");
+            run_ui(eframe::Renderer::Glow, &connector, mock)
+        }
+        other => other,
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            tracing::error!("UI failed: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// OpenGL on Windows paces frames badly on high-refresh monitors (the window
+/// "twitches" at 165 Hz) and when monitors run at different rates, because
+/// its swaps go through the legacy DWM blit path. wgpu's Direct3D 12 swap
+/// chain uses the flip model, which DWM paces per monitor.
+fn preferred_renderer() -> eframe::Renderer {
+    #[cfg(windows)]
+    return eframe::Renderer::Wgpu;
+    #[cfg(not(windows))]
+    eframe::Renderer::Glow
+}
+
+fn run_ui(
+    renderer: eframe::Renderer,
+    connector: &Arc<dyn Connector>,
+    mock: bool,
+) -> eframe::Result {
     let options = eframe::NativeOptions {
+        renderer,
         viewport: egui::ViewportBuilder::default()
             .with_title("Ultimate Console Settings")
             .with_inner_size([900.0, 640.0])
@@ -110,17 +145,31 @@ fn main() -> ExitCode {
             }),
         ..Default::default()
     };
-    match eframe::run_native(
+    let connector = connector.clone();
+    eframe::run_native(
         "Ultimate Console Settings",
         options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc, connector, mock)))),
-    ) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            tracing::error!("UI failed: {e}");
-            ExitCode::FAILURE
-        }
+        Box::new(move |cc| {
+            log_renderer(renderer, cc);
+            Ok(Box::new(app::App::new(cc, connector, mock)))
+        }),
+    )
+}
+
+fn log_renderer(renderer: eframe::Renderer, cc: &eframe::CreationContext<'_>) {
+    #[cfg(windows)]
+    if let Some(rs) = &cc.wgpu_render_state {
+        let info = rs.adapter.get_info();
+        tracing::info!(
+            backend = %info.backend,
+            gpu = %info.name,
+            driver = %info.driver_info,
+            "renderer ready"
+        );
+        return;
     }
+    let _ = cc;
+    tracing::info!(%renderer, "renderer ready");
 }
 
 fn connector(mock: bool) -> std::io::Result<Arc<dyn Connector>> {
