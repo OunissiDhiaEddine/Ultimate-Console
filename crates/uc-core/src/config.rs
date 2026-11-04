@@ -127,9 +127,8 @@ pub struct Display {
     /// The TV. `None` until picked in the settings app; gaming mode refuses to start without it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<DisplayId>,
-    /// Mode to apply on the TV. `None` = automatic: the largest 16:9 mode
-    /// (3840x2160 rather than a 4096x2160 "preferred" one) at its highest
-    /// refresh rate.
+    /// Mode to apply on the TV. `None` = leave it to Windows: the TV keeps
+    /// the mode Windows saved for it, nothing is changed by hand.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mode: Option<DisplayMode>,
     /// Turn HDR on for the TV while gaming.

@@ -6,6 +6,7 @@
 //!    `state.json`.
 //! 2. Wake the TV, then [`wait_available`] until Windows sees it.
 //! 3. [`apply_single`]: only the TV active, primary, optional mode and HDR.
+//!    Switching uses Windows' saved layouts; no mode is set unless asked.
 //!    Call it again after resume to re-assert the layout.
 //! 4. On exit (or crash recovery) [`restore`] the saved [`Topology`].
 //!
@@ -44,8 +45,8 @@ pub struct ApplyOutcome {
 pub enum RestoreOutcome {
     /// The saved topology was applied as is.
     Exact,
-    /// The exact restore failed; the saved displays were turned back on
-    /// with modes picked by Windows, then given their saved resolution.
+    /// The exact restore failed; the saved displays were switched back on
+    /// with the modes Windows saved for that layout (like Win+P).
     Database,
     /// Both failed; every connected display was extended.
     Extend,
@@ -62,8 +63,8 @@ pub fn snapshot() -> Result<Topology> {
     sys::snapshot()
 }
 
-/// Puts a saved layout back, falling back to turning the saved displays on
-/// with Windows' modes and then to "extend" if the exact restore is refused
+/// Puts a saved layout back, falling back to Windows' own saved layout for
+/// those displays and then to "extend" if the exact restore is refused
 /// (plan §2.4). Each pass is verified and repeated if Windows switches the
 /// layout back, and the result is saved to Windows' display database.
 pub fn restore(topology: &Topology) -> Result<RestoreOutcome> {
@@ -71,9 +72,8 @@ pub fn restore(topology: &Topology) -> Result<RestoreOutcome> {
 }
 
 /// Makes `target` the only active display (and so the primary one), then
-/// applies `mode` and turns HDR on if `hdr` is set (`false` leaves HDR as it
-/// is). The layout is not saved to Windows' display database, so a reboot
-/// without a restore still comes back to the desktop layout.
+/// applies `mode` if one is given (`None` keeps the mode Windows saved for
+/// the TV) and turns HDR on if `hdr` is set (`false` leaves HDR as it is).
 pub fn apply_single(
     target: &DisplayId,
     mode: Option<&DisplayMode>,

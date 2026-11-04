@@ -55,7 +55,7 @@ pub fn same_display(a: &DisplayId, b: &DisplayId) -> bool {
 }
 
 /// Label for `display.mode = None`.
-const AUTO_MODE: &str = "Automatic (largest 16:9, e.g. 3840 × 2160)";
+const AUTO_MODE: &str = "Windows default (no change)";
 
 pub fn mode_label(m: &DisplayMode) -> String {
     match m.refresh_hz {

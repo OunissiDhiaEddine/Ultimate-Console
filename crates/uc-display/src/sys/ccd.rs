@@ -17,9 +17,9 @@ use windows::Win32::Devices::Display::{
     DISPLAYCONFIG_TARGET_MODE, DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY,
     DISPLAYCONFIG_VIDEO_SIGNAL_INFO, DisplayConfigGetDeviceInfo, DisplayConfigSetDeviceInfo,
     GetDisplayConfigBufferSizes, QDC_ALL_PATHS, QDC_ONLY_ACTIVE_PATHS, QUERY_DISPLAY_CONFIG_FLAGS,
-    QueryDisplayConfig, SDC_ALLOW_CHANGES, SDC_APPLY, SDC_SAVE_TO_DATABASE, SDC_TOPOLOGY_EXTEND,
-    SDC_TOPOLOGY_SUPPLIED, SDC_USE_SUPPLIED_DISPLAY_CONFIG, SET_DISPLAY_CONFIG_FLAGS,
-    SetDisplayConfig,
+    QueryDisplayConfig, SDC_ALLOW_CHANGES, SDC_ALLOW_PATH_ORDER_CHANGES, SDC_APPLY,
+    SDC_SAVE_TO_DATABASE, SDC_TOPOLOGY_EXTEND, SDC_TOPOLOGY_SUPPLIED,
+    SDC_USE_SUPPLIED_DISPLAY_CONFIG, SET_DISPLAY_CONFIG_FLAGS, SetDisplayConfig,
 };
 use windows::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, LUID, POINTL, RECTL};
 use windows::Win32::Graphics::Gdi::{
@@ -808,6 +808,9 @@ pub fn restore(saved: &Topology) -> Result<RestoreOutcome> {
         }
         restore_hdr(&t);
         info!(attempt, ?outcome, "display topology restored");
+        if let Ok(now) = snapshot() {
+            info!(displays = ?now.summary(), "display layout now");
+        }
         return Ok(outcome);
     }
 
@@ -828,10 +831,11 @@ pub fn restore(saved: &Topology) -> Result<RestoreOutcome> {
     }
 }
 
-/// One restore pass: the exact saved layout, or, if Windows refuses it,
-/// the saved displays turned back on with modes of Windows' choosing. Both
-/// save to Windows' display database, which holds the TV-only layout while
-/// gaming; leaving that there lets Windows switch back to the TV later.
+/// One restore pass, Windows only: the exact saved layout (modes and all,
+/// so the monitor comes back at its own refresh rate), or, if Windows
+/// refuses it, the saved displays switched back on with the modes Windows
+/// keeps in its display database for that layout, like Win+P does. No
+/// resolution or refresh rate is ever set by hand.
 fn restore_once(t: &mut Topology) -> Result<RestoreOutcome> {
     let exact = Config::query(QDC_ALL_PATHS).and_then(|now| {
         t.remap_adapters(&now.adapters())?;
@@ -846,7 +850,7 @@ fn restore_once(t: &mut Topology) -> Result<RestoreOutcome> {
     match exact {
         Ok(()) => Ok(RestoreOutcome::Exact),
         Err(e) => {
-            warn!("exact topology restore failed ({e}); turning the saved displays back on");
+            warn!("exact topology restore failed ({e}); using Windows' saved layout");
             activate_saved(t)?;
             Ok(RestoreOutcome::Database)
         }
@@ -854,13 +858,12 @@ fn restore_once(t: &mut Topology) -> Result<RestoreOutcome> {
 }
 
 /// Makes the saved displays the active ones, found by identity in the
-/// current configuration (like [`apply_single`] finds the TV), with modes
-/// left to Windows. Then puts each one's saved resolution back.
+/// current configuration (like [`apply_single`] finds the TV), with the
+/// modes from Windows' display database.
 fn activate_saved(t: &Topology) -> Result<()> {
     let all = Config::query(QDC_ALL_PATHS)?;
     let targets = targets(&all);
     let mut paths = Vec::new();
-    let mut wanted = Vec::new();
     for p in &t.paths {
         let target = find_target(&targets, &p.display)?;
         // Keep the saved source where the current config offers it, so
@@ -874,50 +877,26 @@ fn activate_saved(t: &Topology) -> Result<()> {
                     && c.sourceInfo.id == p.source.id
             })
             .unwrap_or(target.path);
-        let mut path = all.paths[i];
+        paths.push(all.paths[i]);
+    }
+    set_database_topology(paths)
+}
+
+/// Switches to these paths with the modes Windows saved for that layout
+/// (`SDC_TOPOLOGY_SUPPLIED`). Windows refuses `SDC_ALLOW_CHANGES` and
+/// `SDC_SAVE_TO_DATABASE` with it (error 87), and the layout is already in
+/// the database when this works.
+fn set_database_topology(mut paths: Vec<DISPLAYCONFIG_PATH_INFO>) -> Result<()> {
+    for path in &mut paths {
         path.flags = DISPLAYCONFIG_PATH_ACTIVE;
         path.sourceInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
         path.targetInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
-        paths.push(path);
-        wanted.push((target.adapter, target.id, saved_resolution(t, p)));
     }
-    if let Err(e) = set_config(
+    set_config(
         &paths,
         &[],
-        SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES | SDC_SAVE_TO_DATABASE,
-    ) {
-        warn!("supplied layout refused ({e}); trying TOPOLOGY_SUPPLIED");
-        set_config(
-            &paths,
-            &[],
-            SDC_APPLY | SDC_TOPOLOGY_SUPPLIED | SDC_ALLOW_CHANGES,
-        )?;
-    }
-    for (adapter, target_id, res) in wanted {
-        let Some((width, height)) = res else { continue };
-        let mode = DisplayMode {
-            width,
-            height,
-            refresh_hz: None,
-        };
-        match active_source_name(adapter, target_id) {
-            Ok(name) => {
-                if let Err(e) = set_mode(&name, &mode) {
-                    debug!("saved resolution {width}x{height} not set: {e}");
-                }
-            }
-            Err(e) => debug!("saved resolution not set: {e}"),
-        }
-    }
-    Ok(())
-}
-
-/// The desktop resolution a saved path had.
-fn saved_resolution(t: &Topology, p: &PathEntry) -> Option<(u32, u32)> {
-    match t.modes.get(p.source.mode_idx as usize)? {
-        ModeEntry::Source { width, height, .. } => Some((*width, *height)),
-        _ => None,
-    }
+        SDC_APPLY | SDC_TOPOLOGY_SUPPLIED | SDC_ALLOW_PATH_ORDER_CHANGES,
+    )
 }
 
 /// True when exactly the saved displays are active.
@@ -955,24 +934,6 @@ pub fn apply_single(
         warn!("{msg}");
         warnings.push(msg);
     };
-
-    if mode.is_none() {
-        match active_source_name(adapter, target_id) {
-            Ok(name) => {
-                let modes = driver_modes(&name);
-                match identity::auto_mode(&modes) {
-                    Some(m) => {
-                        info!(width = m.width, height = m.height, hz = ?m.refresh_hz, "automatic TV mode");
-                        if let Err(e) = set_mode(&name, m) {
-                            warn_user(format!("could not set {}x{}: {e}", m.width, m.height));
-                        }
-                    }
-                    None => debug!("no 16:9 mode listed; keeping the TV's own mode"),
-                }
-            }
-            Err(e) => warn_user(format!("could not read the display's modes: {e}")),
-        }
-    }
 
     if let Some(want_mode) = mode {
         match active_source_name(adapter, target_id) {
@@ -1082,28 +1043,24 @@ fn activate_only(all: &Config, target: &Target) -> Result<()> {
         }
     }
 
-    // 2. Inactive (or 1. failed): supply only the path and let Windows pick
-    //    the modes.
+    // 2. Inactive (or 1. failed): Windows' saved modes for a TV-only layout,
+    //    like Win+P would use.
+    match set_database_topology(vec![all.paths[target.path]]) {
+        Ok(()) => return Ok(()),
+        Err(e) => debug!("no saved TV-only layout in Windows ({e}); letting Windows pick"),
+    }
+
+    // 3. Never used before: supply only the path and let Windows pick the
+    //    modes, and save the layout so Windows has it next time.
     let mut path = all.paths[target.path];
     path.flags = DISPLAYCONFIG_PATH_ACTIVE;
     path.sourceInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
     path.targetInfo.Anonymous.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
-    match set_config(
+    set_config(
         &[path],
         &[],
         SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES | SDC_SAVE_TO_DATABASE,
-    ) {
-        Ok(()) => Ok(()),
-        // 3. Some drivers want the database to fill in the modes.
-        Err(e) => {
-            warn!("supplied single-path config refused ({e}); trying TOPOLOGY_SUPPLIED");
-            set_config(
-                &[path],
-                &[],
-                SDC_APPLY | SDC_TOPOLOGY_SUPPLIED | SDC_ALLOW_CHANGES,
-            )
-        }
-    }
+    )
 }
 
 pub fn wait_available(want: &DisplayId, timeout: Duration) -> Result<DisplayId> {
