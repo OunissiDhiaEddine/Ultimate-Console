@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromWindow,
+    DEVMODEW, ENUM_CURRENT_SETTINGS, EnumDisplaySettingsW, GetMonitorInfoW,
+    MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MONITORINFOEXW,
+    MonitorFromWindow,
 };
 use windows::Win32::System::Threading::{
     GetCurrentProcessId, OpenProcess, PROCESS_TERMINATE, TerminateProcess,
@@ -22,10 +24,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     PostMessageW, SW_RESTORE, SetForegroundWindow, ShowWindow, WM_CLOSE, WS_EX_APPWINDOW,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
-use windows::core::BOOL;
+use windows::core::{BOOL, PCWSTR};
 
 use crate::gamepad::PadState;
-use crate::model::Task;
+use crate::model::{DisplayMode, Task};
 use crate::tasks::{WindowFacts, is_task};
 
 fn text(hwnd: HWND) -> String {
@@ -200,6 +202,31 @@ pub fn foreground_monitor() -> RECT {
         }
     }
     mi.rcMonitor
+}
+
+/// Current resolution and refresh rate of the monitor `hwnd` is on, as
+/// Windows' own display settings report them.
+pub fn display_mode(hwnd: HWND) -> Option<DisplayMode> {
+    let mut mi = MONITORINFOEXW::default();
+    mi.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
+    let mut dm = DEVMODEW {
+        dmSize: size_of::<DEVMODEW>() as u16,
+        ..Default::default()
+    };
+    // SAFETY: `mi.cbSize` says it is a MONITORINFOEXW, so Windows may fill
+    // `szDevice`; that name is NUL-terminated and outlives the second call,
+    // and `dm` is a sized DEVMODEW.
+    let ok = unsafe {
+        let mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        GetMonitorInfoW(mon, &mut mi.monitorInfo).as_bool()
+            && EnumDisplaySettingsW(PCWSTR(mi.szDevice.as_ptr()), ENUM_CURRENT_SETTINGS, &mut dm)
+                .as_bool()
+    };
+    ok.then_some(DisplayMode {
+        width: dm.dmPelsWidth,
+        height: dm.dmPelsHeight,
+        refresh_hz: dm.dmDisplayFrequency,
+    })
 }
 
 const RESCAN: Duration = Duration::from_secs(1);

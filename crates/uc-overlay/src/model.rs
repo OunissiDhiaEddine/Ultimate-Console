@@ -2,28 +2,33 @@
 //! the Win32 layer feeds it tasks, volume and stats, turns key presses and
 //! gamepad buttons into [`Action`]s, and carries out the [`Effect`]s it returns.
 
-use uc_audio::AppSession;
+use uc_audio::{AppSession, AudioDevice};
 use uc_sysinfo::{ProcessStats, Snapshot};
 
 /// One step of the volume sliders (5 %).
 pub const VOLUME_STEP: f32 = 0.05;
 
-/// The three panels of plan §2.9.
+/// The overlay's panels, in the order they are shown. The overlay opens on
+/// the first one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
     #[default]
-    Tasks,
     Volume,
+    Tasks,
+    /// Pick the default audio output device.
+    Output,
+    /// Stats of the selected task and the current display mode.
     Info,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 3] = [Tab::Tasks, Tab::Volume, Tab::Info];
+    pub const ALL: [Tab; 4] = [Tab::Volume, Tab::Tasks, Tab::Output, Tab::Info];
 
     pub fn title(self) -> &'static str {
         match self {
-            Tab::Tasks => "Tasks",
             Tab::Volume => "Volume",
+            Tab::Tasks => "Tasks",
+            Tab::Output => "Output",
             Tab::Info => "Info",
         }
     }
@@ -94,6 +99,8 @@ pub enum Effect {
         pid: u32,
         muted: bool,
     },
+    /// Make this endpoint ([`AudioDevice::id`]) the default output.
+    SetDefaultOutput(String),
 }
 
 /// A question shown on top of the panels.
@@ -117,6 +124,39 @@ pub struct Volume {
     pub apps: Vec<AppSession>,
     /// Shown instead of the sliders when audio is unavailable.
     pub error: Option<String>,
+}
+
+/// What the output panel shows.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Outputs {
+    pub devices: Vec<AudioDevice>,
+    /// Shown instead of the list when audio is unavailable.
+    pub error: Option<String>,
+}
+
+/// Mode of the display the overlay is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DisplayMode {
+    pub width: u32,
+    pub height: u32,
+    /// Whole Hz, as Windows reports it (59.94 Hz shows as 59).
+    pub refresh_hz: u32,
+}
+
+impl DisplayMode {
+    /// `2560 × 1440`.
+    pub fn resolution_text(&self) -> String {
+        format!("{} × {}", self.width, self.height)
+    }
+
+    /// `165 Hz`, or `Unknown` when Windows reports 0 or 1 (hardware default).
+    pub fn refresh_text(&self) -> String {
+        if self.refresh_hz > 1 {
+            format!("{} Hz", self.refresh_hz)
+        } else {
+            "Unknown".to_owned()
+        }
+    }
 }
 
 /// One line of the volume panel.
@@ -161,6 +201,11 @@ pub struct Model {
     /// Index into [`Model::volume_rows`].
     pub volume_row: usize,
     pub stats: Snapshot,
+    pub outputs: Outputs,
+    /// Index into `outputs.devices`.
+    pub output_row: usize,
+    /// `None` until read, or when Windows can't tell.
+    pub display: Option<DisplayMode>,
     pub confirm: Option<Confirm>,
 }
 
@@ -172,13 +217,14 @@ impl Model {
         }
     }
 
-    /// Back to the Tasks panel with the first task (the window that was in
+    /// Back to the first panel with the first task (the window that was in
     /// front before the overlay opened) selected. Called on every show.
     pub fn reset(&mut self) {
-        self.tab = Tab::Tasks;
+        self.tab = Tab::ALL[0];
         self.selected = 0;
         self.scroll_row = 0;
         self.volume_row = 0;
+        self.output_row = 0;
         self.confirm = None;
     }
 
@@ -213,6 +259,28 @@ impl Model {
         self.volume_row = self
             .volume_row
             .min(self.volume_rows().len().saturating_sub(1));
+    }
+
+    /// Replace the device list. Puts the cursor on the default device when
+    /// the list was empty before (first read after opening), otherwise keeps
+    /// it on the same device.
+    pub fn set_outputs(&mut self, outputs: Outputs) {
+        let keep = self
+            .outputs
+            .devices
+            .get(self.output_row)
+            .map(|d| d.id.clone());
+        let fresh = self.outputs.devices.is_empty();
+        self.outputs = outputs;
+        let devices = &self.outputs.devices;
+        let by_id = |id: &str| devices.iter().position(|d| d.id == id);
+        let default = devices.iter().position(|d| d.is_default);
+        self.output_row = if fresh {
+            default
+        } else {
+            keep.as_deref().and_then(by_id)
+        }
+        .unwrap_or_else(|| self.output_row.min(devices.len().saturating_sub(1)));
     }
 
     /// Master first, then the selected task's app, then every other app.
@@ -308,6 +376,7 @@ impl Model {
                 match self.tab {
                     Tab::Tasks => self.tasks_nav(action),
                     Tab::Volume => self.volume_nav(action),
+                    Tab::Output => self.output_nav(action),
                     Tab::Info => self.info_nav(action),
                 }
             }
@@ -346,6 +415,32 @@ impl Model {
             Action::Left => return self.adjust_row(self.volume_row, -VOLUME_STEP),
             Action::Right => return self.adjust_row(self.volume_row, VOLUME_STEP),
             Action::Accept => return self.toggle_row_mute(self.volume_row),
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn output_nav(&mut self, action: Action) -> Vec<Effect> {
+        let n = self.outputs.devices.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        match action {
+            Action::Up | Action::Left => self.output_row = self.output_row.saturating_sub(1),
+            Action::Down | Action::Right => self.output_row = (self.output_row + 1).min(n - 1),
+            Action::Accept => {
+                let row = self.output_row.min(n - 1);
+                if self.outputs.devices[row].is_default {
+                    return Vec::new();
+                }
+                // Show the change right away; the next refresh confirms it.
+                for (i, d) in self.outputs.devices.iter_mut().enumerate() {
+                    d.is_default = i == row;
+                }
+                return vec![Effect::SetDefaultOutput(
+                    self.outputs.devices[row].id.clone(),
+                )];
+            }
             _ => {}
         }
         Vec::new()
@@ -447,6 +542,7 @@ mod tests {
 
     fn model_with_tasks(n: isize, columns: usize) -> Model {
         let mut m = Model::new(columns);
+        m.tab = Tab::Tasks;
         m.set_tasks((1..=n).map(|i| task(i, i as u32 * 10)).collect());
         m
     }
@@ -492,14 +588,105 @@ mod tests {
     #[test]
     fn tabs_wrap_both_ways() {
         let mut m = Model::new(4);
+        assert_eq!(m.tab, Tab::Volume);
         m.handle(Action::PrevTab);
         assert_eq!(m.tab, Tab::Info);
         m.handle(Action::NextTab);
+        assert_eq!(m.tab, Tab::Volume);
+        m.handle(Action::NextTab);
         assert_eq!(m.tab, Tab::Tasks);
-        m.handle(Action::SelectTab(1));
-        assert_eq!(m.tab, Tab::Volume);
+        m.handle(Action::SelectTab(2));
+        assert_eq!(m.tab, Tab::Output);
         m.handle(Action::SelectTab(9));
+        assert_eq!(m.tab, Tab::Output);
+    }
+
+    #[test]
+    fn opens_on_volume_then_tasks() {
+        assert_eq!(&Tab::ALL[..2], &[Tab::Volume, Tab::Tasks]);
+        let mut m = model_with_tasks(3, 4);
+        m.tab = Tab::Info;
+        m.selected = 2;
+        m.reset();
         assert_eq!(m.tab, Tab::Volume);
+        assert_eq!(m.selected, 0);
+    }
+
+    fn dev(id: &str, is_default: bool) -> AudioDevice {
+        AudioDevice {
+            id: id.into(),
+            name: id.to_uppercase(),
+            is_default,
+        }
+    }
+
+    #[test]
+    fn output_cursor_starts_on_default_and_follows_device() {
+        let mut m = Model::new(4);
+        m.set_outputs(Outputs {
+            devices: vec![dev("a", false), dev("b", false), dev("tv", true)],
+            error: None,
+        });
+        assert_eq!(m.output_row, 2);
+        m.tab = Tab::Output;
+        m.handle(Action::Up);
+        assert_eq!(m.output_row, 1);
+        // Device list changes order: the cursor stays on "b".
+        m.set_outputs(Outputs {
+            devices: vec![dev("b", false), dev("tv", true)],
+            error: None,
+        });
+        assert_eq!(m.output_row, 0);
+        // "b" unplugged: clamp.
+        m.set_outputs(Outputs {
+            devices: vec![dev("tv", true)],
+            error: None,
+        });
+        assert_eq!(m.output_row, 0);
+    }
+
+    #[test]
+    fn accept_on_output_switches_default() {
+        let mut m = Model::new(4);
+        m.tab = Tab::Output;
+        m.set_outputs(Outputs {
+            devices: vec![dev("speakers", true), dev("tv", false)],
+            error: None,
+        });
+        assert_eq!(m.output_row, 0);
+        // Already the default: nothing to do.
+        assert!(m.handle(Action::Accept).is_empty());
+        m.handle(Action::Down);
+        m.handle(Action::Down);
+        assert_eq!(m.output_row, 1);
+        assert_eq!(
+            m.handle(Action::Accept),
+            vec![Effect::SetDefaultOutput("tv".into())]
+        );
+        assert!(m.outputs.devices[1].is_default);
+        assert!(!m.outputs.devices[0].is_default);
+    }
+
+    #[test]
+    fn output_without_devices_is_inert() {
+        let mut m = Model::new(4);
+        m.tab = Tab::Output;
+        for a in [Action::Up, Action::Down, Action::Accept] {
+            assert!(m.handle(a).is_empty());
+        }
+    }
+
+    #[test]
+    fn display_mode_text() {
+        let d = DisplayMode {
+            width: 2560,
+            height: 1440,
+            refresh_hz: 165,
+        };
+        assert_eq!(d.resolution_text(), "2560 × 1440");
+        assert_eq!(d.refresh_text(), "165 Hz");
+        let d = DisplayMode { refresh_hz: 1, ..d };
+        assert_eq!(d.refresh_text(), "Unknown");
     }
 
     #[test]

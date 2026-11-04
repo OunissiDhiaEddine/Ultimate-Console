@@ -11,16 +11,19 @@
 //! opens and dropped when it closes, and no timers run.
 //!
 //! When open it covers the monitor the foreground window is on with a dimmed
-//! backdrop and a centred card with three panels:
+//! backdrop and a centred card with four panels (it opens on the first):
 //!
-//! 1. **Tasks**: alt-tab-eligible windows with live DWM thumbnails. Switch
+//! 1. **Volume**: master volume and mute, then per-app volume with the
+//!    selected task's app first.
+//! 2. **Tasks**: alt-tab-eligible windows with live DWM thumbnails. Switch
 //!    to (A / Enter / click), close (X / Delete), end process (Y /
 //!    Shift+Delete, after confirming).
-//! 2. **Volume**: master volume and mute, then per-app volume with the
-//!    selected task's app first.
-//! 3. **Info**: CPU, GPU, RAM and uptime of the selected task, sampled at
-//!    `config.overlay.sample_interval_ms`. The system line is in the footer
-//!    of every panel.
+//! 3. **Output**: the active audio output devices; A / Enter makes the
+//!    selected one the Windows default.
+//! 4. **Info**: CPU, GPU, RAM and uptime of the selected task, sampled at
+//!    `config.overlay.sample_interval_ms`, plus the current resolution and
+//!    refresh rate of the display. The system line is in the footer of
+//!    every panel.
 //!
 //! A separate small **volume popup** ([`osd`]) shows the master volume for a
 //! couple of seconds when [`Overlay::volume_key`] is called (volume keys in

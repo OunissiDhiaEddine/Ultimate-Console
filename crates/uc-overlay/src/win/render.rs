@@ -403,6 +403,7 @@ impl Gfx {
         match model.tab {
             Tab::Tasks => self.tasks(model, l),
             Tab::Volume => self.volume(model, l),
+            Tab::Output => self.output(model, l),
             Tab::Info => self.info(model, l),
         }
 
@@ -514,23 +515,120 @@ impl Gfx {
         }
     }
 
+    fn output(&self, model: &Model, l: &Layout) {
+        let f = &self.fonts;
+        if let Some(e) = &model.outputs.error {
+            self.text(
+                &format!("Audio unavailable: {e}"),
+                &f.body_center,
+                l.body,
+                DIM,
+            );
+            return;
+        }
+        let devices = &model.outputs.devices;
+        if devices.is_empty() {
+            self.text("No audio output device", &f.body_center, l.body, DIM);
+            return;
+        }
+        let visible = l.volume_rows_visible();
+        let first = (model.output_row + 1).saturating_sub(visible);
+        for (i, d) in devices.iter().enumerate().skip(first).take(visible) {
+            let y = l.body.y + (i - first) as f32 * ROW_H;
+            let r = Rect::new(l.body.x, y, l.body.w, ROW_H - 8.0);
+            if i == model.output_row {
+                self.fill(r, 10.0, TILE_SELECTED);
+                self.fill(Rect::new(r.x, r.y + 12.0, 4.0, r.h - 24.0), 2.0, ACCENT);
+            }
+            let tag_w = 160.0;
+            // Segoe MDL2 Assets: CheckMark next to the device in use.
+            if d.is_default {
+                self.text(
+                    "\u{E73E}",
+                    &f.icon,
+                    Rect::new(r.x + 18.0, r.y, 32.0, r.h),
+                    ACCENT,
+                );
+            }
+            self.text(
+                &d.name,
+                &f.body,
+                Rect::new(r.x + 60.0, r.y, (r.w - 60.0 - tag_w - 16.0).max(10.0), r.h),
+                if d.is_default { TEXT } else { DIM },
+            );
+            if d.is_default {
+                self.text(
+                    "In use",
+                    &f.body_right,
+                    Rect::new(r.right() - tag_w - 16.0, r.y, tag_w, r.h),
+                    ACCENT,
+                );
+            }
+        }
+    }
+
+    /// Label / value rows starting at (`x`, `top`), `w` wide.
+    fn kv_rows(&self, rows: &[(&str, String)], x: f32, top: f32, w: f32, bottom: f32) {
+        let f = &self.fonts;
+        let col_w = (w / 2.0).min(420.0);
+        for (i, (k, v)) in rows.iter().enumerate() {
+            let y = top + i as f32 * 44.0;
+            if y + 40.0 > bottom {
+                break;
+            }
+            self.text(k, &f.body, Rect::new(x, y, col_w, 40.0), DIM);
+            self.text(v, &f.tab, Rect::new(x + col_w, y, w - col_w, 40.0), TEXT);
+        }
+    }
+
     fn info(&self, model: &Model, l: &Layout) {
         let f = &self.fonts;
+        let b = l.body;
+        let display: [(&str, String); 2] = match model.display {
+            Some(d) => [
+                ("Resolution", d.resolution_text()),
+                ("Refresh rate", d.refresh_text()),
+            ],
+            None => [("Resolution", "…".into()), ("Refresh rate", "…".into())],
+        };
+        // Display on the right on a wide card, else under the task stats.
+        let wide = b.w >= 820.0;
+        let (task_w, display_x) = if wide {
+            (b.w * 0.58, b.x + b.w * 0.62)
+        } else {
+            (b.w, b.x)
+        };
+        let display_w = b.right() - display_x;
+        let display_section = |top: f32| {
+            self.text(
+                "Display",
+                &f.big,
+                Rect::new(display_x, top, display_w, 44.0),
+                TEXT,
+            );
+            self.kv_rows(&display, display_x, top + 56.0, display_w, b.bottom());
+        };
+
         let Some(task) = model.selected_task() else {
-            self.text("No task selected", &f.body_center, l.body, DIM);
+            self.text(
+                "No task selected",
+                &f.body,
+                Rect::new(b.x, b.y, task_w, 44.0),
+                DIM,
+            );
+            display_section(if wide { b.y } else { b.y + 56.0 });
             return;
         };
-        let b = l.body;
         self.text(
             &model.process_name(task),
             &f.big,
-            Rect::new(b.x, b.y, b.w, 44.0),
+            Rect::new(b.x, b.y, task_w, 44.0),
             TEXT,
         );
         self.text(
             &task.title,
             &f.body,
-            Rect::new(b.x, b.y + 44.0, b.w, 28.0),
+            Rect::new(b.x, b.y + 44.0, task_w, 28.0),
             DIM,
         );
 
@@ -556,19 +654,13 @@ impl Gfx {
             ("Process ID", task.pid.to_string()),
         ];
         let top = b.y + 92.0;
-        let col_w = (b.w / 2.0).min(420.0);
-        for (i, (k, v)) in rows.iter().enumerate() {
-            let y = top + i as f32 * 44.0;
-            if y + 40.0 > b.bottom() {
-                break;
-            }
-            self.text(k, &f.body, Rect::new(b.x, y, col_w, 40.0), DIM);
-            self.text(
-                v,
-                &f.tab,
-                Rect::new(b.x + col_w, y, b.w - col_w, 40.0),
-                TEXT,
-            );
+        if wide {
+            self.kv_rows(&rows, b.x, top, task_w, b.bottom());
+            display_section(b.y);
+        } else {
+            // Narrow card: drop the least useful rows to make room.
+            self.kv_rows(&rows[..4], b.x, top, task_w, b.bottom());
+            display_section(top + 4.0 * 44.0 + 8.0);
         }
     }
 
@@ -594,6 +686,7 @@ impl Gfx {
         let hints = match model.tab {
             Tab::Tasks => "A Switch   X Close   Y End task   LB/RB Panels   B Back",
             Tab::Volume => "◀ ▶ Adjust   A Mute   LT/RT Master   LB/RB Panels   B Back",
+            Tab::Output => "▲ ▼ Choose   A Use this device   LB/RB Panels   B Back",
             Tab::Info => "◀ ▶ Task   A Switch   LB/RB Panels   B Back",
         };
         self.text(
