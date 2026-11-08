@@ -31,6 +31,7 @@ pub struct Config {
     pub steam: Steam,
     pub power: Power,
     pub overlay: Overlay,
+    pub cursor: Cursor,
     pub updates: Updates,
 }
 
@@ -46,6 +47,7 @@ impl Default for Config {
             steam: Steam::default(),
             power: Power::default(),
             overlay: Overlay::default(),
+            cursor: Cursor::default(),
             updates: Updates::default(),
         }
     }
@@ -276,6 +278,25 @@ impl Default for Overlay {
     }
 }
 
+/// The mouse pointer in gaming mode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Cursor {
+    /// Hide the pointer in gaming mode once the mouse has been still for
+    /// `hide_after_secs`; moving the mouse brings it back at once.
+    pub hide_in_gaming: bool,
+    pub hide_after_secs: u32,
+}
+
+impl Default for Cursor {
+    fn default() -> Self {
+        Self {
+            hide_in_gaming: true,
+            hide_after_secs: 3,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Updates {
@@ -381,6 +402,7 @@ impl Config {
                 "overlay.sample_interval_ms",
                 self.overlay.sample_interval_ms,
             ),
+            ("cursor.hide_after_secs", self.cursor.hide_after_secs),
         ] {
             if v == 0 {
                 problems.push(format!("{name} must be > 0"));

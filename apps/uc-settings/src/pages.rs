@@ -142,6 +142,23 @@ impl App {
             "Keyboard and headset volume buttons change the volume and show the level \
              for two seconds. Windows can't do this in gaming mode because Explorer is closed.",
         );
+        ui.add_space(6.0);
+        ui.checkbox(
+            &mut d.cursor.hide_in_gaming,
+            "Hide the mouse pointer in gaming mode",
+        );
+        if d.cursor.hide_in_gaming {
+            secs(
+                ui,
+                "Hide after the mouse is still for",
+                &mut d.cursor.hide_after_secs,
+                60,
+            );
+        }
+        hint(
+            ui,
+            "Moving the mouse or pressing a button brings the pointer back at once.",
+        );
 
         section(ui, "Logging");
         ui.horizontal(|ui| {

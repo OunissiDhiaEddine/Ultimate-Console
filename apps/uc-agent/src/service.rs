@@ -15,7 +15,9 @@ use uc_core::ipc::{ErrorCode, IpcEvent, IpcResponse};
 use uc_core::state::Mode;
 use uc_core::{Config, RuntimeState};
 
-use crate::orchestrator::{ExitTrigger, Orchestrator, overlay_allowed, volume_keys_active};
+use crate::orchestrator::{
+    ExitTrigger, Orchestrator, cursor_hide_after, overlay_allowed, volume_keys_active,
+};
 use crate::overlay::OverlayHost;
 use crate::platform::{RealPlatform, SharedTv};
 use crate::shared::Shared;
@@ -59,6 +61,8 @@ pub struct Service {
     last_keepalive: Instant,
     /// What the window was last told about the volume keys.
     volume_keys: bool,
+    /// What the window was last told about hiding the pointer.
+    cursor_hide: Option<Duration>,
 }
 
 fn modified(path: &PathBuf) -> Option<SystemTime> {
@@ -87,6 +91,7 @@ impl Service {
             config_stamp,
             last_keepalive: Instant::now(),
             volume_keys: false,
+            cursor_hide: None,
         }
     }
 
@@ -121,6 +126,11 @@ impl Service {
             if volume_keys != self.volume_keys {
                 self.volume_keys = volume_keys;
                 self.window.set_volume_keys(volume_keys);
+            }
+            let cursor_hide = cursor_hide_after(self.orch.mode(), self.orch.config());
+            if cursor_hide != self.cursor_hide {
+                self.cursor_hide = cursor_hide;
+                self.window.set_cursor_hide(cursor_hide);
             }
         }
     }
