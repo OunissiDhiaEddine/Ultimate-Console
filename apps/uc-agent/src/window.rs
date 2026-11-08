@@ -1,6 +1,7 @@
 //! The agent's hidden window on the main thread (plan §3): global hotkeys,
 //! suspend/resume notifications, the overlay hotkey, and in gaming mode the
-//! media volume keys (Explorer normally handles those, and it isn't running).
+//! media volume keys (Explorer normally handles those, and it isn't running)
+//! and the pointer auto-hide ([`crate::cursor`]).
 //!
 //! It is a hidden top-level window rather than a message-only one, like
 //! `uc-power`'s, because message-only windows miss some power broadcasts.
@@ -33,11 +34,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetMessageW,
     GetWindowLongPtrW, MSG, PostMessageW, PostQuitMessage, RegisterClassW, SendMessageW,
     SetWindowLongPtrW, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY,
-    WM_DISPLAYCHANGE, WM_HOTKEY, WM_POWERBROADCAST, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_POPUP,
+    WM_DISPLAYCHANGE, WM_HOTKEY, WM_INPUT, WM_POWERBROADCAST, WM_TIMER, WNDCLASSW,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 
+use crate::cursor::{self, Hider};
 use crate::hotkeys::{self, ACTIONS};
 use crate::orchestrator::{overlay_allowed, tv_sleep_on_suspend};
 use crate::overlay::OverlayHost;
@@ -52,6 +54,8 @@ const WM_APP_APPLY_HOTKEYS: u32 = WM_APP + 1;
 const WM_APP_PROBE_HOTKEY: u32 = WM_APP + 2;
 /// wparam: 1 to take the volume keys, 0 to give them back.
 const WM_APP_VOLUME_KEYS: u32 = WM_APP + 3;
+/// wparam: milliseconds of stillness before the pointer hides, 0 for off.
+const WM_APP_CURSOR_HIDE: u32 = WM_APP + 4;
 /// Temporary id for probing whether a shortcut can be registered.
 const PROBE_ID: i32 = 100;
 /// Hotkey ids of the volume keys: this plus the index in [`VolumeKey::ALL`].
@@ -82,6 +86,7 @@ struct WindowState {
     registered: [Option<Hotkey>; 3],
     /// The volume keys are registered (gaming mode).
     volume_keys: bool,
+    cursor: Hider,
     filter: EventFilter,
 }
 
@@ -116,6 +121,7 @@ impl Window {
             overlay,
             registered: [None; 3],
             volume_keys: false,
+            cursor: Hider::start(),
             filter: EventFilter::new(),
         }));
         // SAFETY: standard class registration and window creation; the class
@@ -260,6 +266,14 @@ impl WindowHandle {
         };
     }
 
+    /// Turns the pointer auto-hide on (`Some(delay)`, gaming mode) or off,
+    /// showing the pointer. Cheap to repeat.
+    pub fn set_cursor_hide(self, after: Option<Duration>) {
+        let ms = after.map_or(0, |d| d.as_millis().clamp(1, u32::MAX as u128) as usize);
+        // SAFETY: as in `apply_hotkeys`; nothing is passed by pointer.
+        unsafe { SendMessageW(self.hwnd(), WM_APP_CURSOR_HIDE, Some(WPARAM(ms)), None) };
+    }
+
     /// Ends the message loop, which ends the agent.
     pub fn close(self) {
         // SAFETY: posting to our own window; fails harmlessly if it is gone.
@@ -350,7 +364,7 @@ impl WindowState {
         }
     }
 
-    fn on_hotkey(&self, action: HotkeyAction) {
+    fn on_hotkey(&mut self, hwnd: HWND, action: HotkeyAction) {
         tracing::info!(action = hotkeys::name(action), "hotkey pressed");
         match action {
             HotkeyAction::GamingToggle => {
@@ -362,6 +376,8 @@ impl WindowState {
                 }
             }
             HotkeyAction::PanicRestore => {
+                // The pointer comes back at once, before anything else.
+                self.cursor.set(hwnd, None);
                 self.shared.request_abort();
                 let _ = self.commands.send(Command::Panic);
             }
@@ -439,7 +455,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_HOTKEY => {
             let id = wparam.0 as i32;
             if let Some(action) = hotkeys::from_id(id) {
-                state.on_hotkey(action);
+                state.on_hotkey(hwnd, action);
             } else if let Some(key) = volume_key_from_id(id) {
                 state.overlay.volume_key(key);
             }
@@ -488,6 +504,20 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
             Some(LRESULT(0))
         }
+        WM_APP_CURSOR_HIDE => {
+            let after = (wparam.0 != 0).then(|| Duration::from_millis(wparam.0 as u64));
+            state.cursor.set(hwnd, after);
+            Some(LRESULT(0))
+        }
+        WM_TIMER if wparam.0 == cursor::TIMER_ID => {
+            state.cursor.on_timer(hwnd);
+            Some(LRESULT(0))
+        }
+        WM_INPUT => {
+            state.cursor.on_input(hwnd);
+            // DefWindowProc still runs: it frees the raw input data.
+            None
+        }
         WM_CLOSE => {
             // SAFETY: destroying our own window from its own thread.
             let _ = unsafe { DestroyWindow(hwnd) };
@@ -498,6 +528,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 unregister(hwnd, hotkeys::id(action));
             }
             set_volume_keys(hwnd, false);
+            state.cursor.set(hwnd, None);
             // SAFETY: ends this thread's message loop.
             unsafe { PostQuitMessage(0) };
             Some(LRESULT(0))

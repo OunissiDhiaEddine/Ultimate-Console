@@ -17,6 +17,7 @@
 // Elsewhere only the pure modules build, for their tests.
 #![cfg_attr(not(windows), allow(dead_code))]
 
+mod cursor;
 mod hotkeys;
 mod orchestrator;
 mod overlay;

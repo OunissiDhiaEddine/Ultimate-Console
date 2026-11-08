@@ -124,6 +124,13 @@ pub fn overlay_allowed(mode: Mode, config: &Config) -> bool {
     mode == Mode::Gaming || config.overlay.in_desktop_mode
 }
 
+/// How long the mouse must be still before the pointer hides, or `None`
+/// to leave it alone: only in gaming mode, when turned on.
+pub fn cursor_hide_after(mode: Mode, config: &Config) -> Option<Duration> {
+    (mode == Mode::Gaming && config.cursor.hide_in_gaming)
+        .then(|| Duration::from_secs(config.cursor.hide_after_secs.max(1).into()))
+}
+
 /// Whether the agent takes over the volume keys: only in gaming mode, where
 /// Explorer (which normally handles them) isn't running.
 pub fn volume_keys_active(mode: Mode, config: &Config) -> bool {
@@ -1252,5 +1259,24 @@ pub(crate) mod tests {
         assert!(!volume_keys_active(Mode::Desktop, &c));
         c.overlay.volume_keys = false;
         assert!(!volume_keys_active(Mode::Gaming, &c));
+    }
+
+    #[test]
+    fn pointer_hides_only_in_gaming_mode() {
+        let mut c = Config::default();
+        assert_eq!(
+            cursor_hide_after(Mode::Gaming, &c),
+            Some(Duration::from_secs(3))
+        );
+        for mode in [Mode::Desktop, Mode::Entering, Mode::Exiting] {
+            assert_eq!(cursor_hide_after(mode, &c), None, "{mode:?}");
+        }
+        c.cursor.hide_after_secs = 0;
+        assert_eq!(
+            cursor_hide_after(Mode::Gaming, &c),
+            Some(Duration::from_secs(1))
+        );
+        c.cursor.hide_in_gaming = false;
+        assert_eq!(cursor_hide_after(Mode::Gaming, &c), None);
     }
 }
