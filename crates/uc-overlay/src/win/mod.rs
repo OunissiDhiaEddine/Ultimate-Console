@@ -1,5 +1,6 @@
 //! The overlay window, its UI thread and the handle other threads use.
 
+mod keyhook;
 mod osd;
 mod render;
 mod system;
@@ -17,20 +18,22 @@ use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetThreadDpiAwarenessContext,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, VIRTUAL_KEY, VK_ADD, VK_BACK, VK_DELETE, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_NEXT,
-    VK_OEM_MINUS, VK_OEM_PLUS, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_SUBTRACT,
-    VK_TAB, VK_UP,
+    GetAsyncKeyState, VIRTUAL_KEY, VK_ADD, VK_BACK, VK_DELETE, VK_DOWN, VK_ESCAPE, VK_LEFT,
+    VK_NEXT, VK_OEM_MINUS, VK_OEM_PLUS, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE,
+    VK_SUBTRACT, VK_TAB, VK_UP,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetForegroundWindow,
-    GetMessageW, HWND_TOPMOST, IDC_ARROW, IsWindow, KillTimer, LoadCursorW, MSG, PostMessageW,
-    PostQuitMessage, RegisterClassExW, SW_HIDE, SW_SHOW, SWP_NOACTIVATE, SetTimer, SetWindowPos,
-    ShowWindow, TranslateMessage, WA_INACTIVE, WM_ACTIVATE, WM_APP, WM_CLOSE, WM_DESTROY,
-    WM_DISPLAYCHANGE, WM_DPICHANGED, WM_KEYDOWN, WM_LBUTTONUP, WM_SYSKEYDOWN, WM_TIMER,
-    WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    GetMessageW, HWND_TOPMOST, IDC_ARROW, IsWindow, KillTimer, LoadCursorW, MA_NOACTIVATE, MSG,
+    PostMessageW, PostQuitMessage, RegisterClassExW, SW_HIDE, SW_SHOW, SW_SHOWNA, SWP_NOACTIVATE,
+    SetTimer, SetWindowPos, ShowWindow, TranslateMessage, WA_INACTIVE, WM_ACTIVATE, WM_APP,
+    WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_KEYDOWN, WM_LBUTTONUP,
+    WM_MOUSEACTIVATE, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP,
+    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::w;
 
+use self::keyhook::KeyHook;
 use self::osd::{Osd, TIMER_OSD_FRAME, TIMER_OSD_HIDE};
 use self::render::Gfx;
 use self::system::Pads;
@@ -49,6 +52,8 @@ const WM_APP_SETTINGS: u32 = WM_APP + 4;
 const WM_APP_QUIT: u32 = WM_APP + 5;
 /// wparam: [`VolumeKey::to_raw`].
 const WM_APP_VOLUME_KEY: u32 = WM_APP + 6;
+/// wparam: a virtual-key code from [`keyhook`], while shown without focus.
+const WM_APP_KEY: u32 = WM_APP + 7;
 
 const TIMER_FRAME: usize = 1;
 const TIMER_SAMPLE: usize = 2;
@@ -281,6 +286,10 @@ struct State {
     dirty: bool,
     /// The window that was in front when the overlay opened.
     previous: HWND,
+    /// Shown over an exclusive-fullscreen game without taking focus (it
+    /// would minimise itself); the keyboard comes through `key_hook`.
+    passive: bool,
+    key_hook: Option<KeyHook>,
     gfx: Option<Gfx>,
     thumbs: Thumbs,
     audio: Option<Box<dyn uc_audio::AudioControl>>,
@@ -321,6 +330,8 @@ impl State {
             last_opacity: 0.0,
             dirty: false,
             previous: HWND::default(),
+            passive: false,
+            key_hook: None,
             gfx: None,
             thumbs: Thumbs::default(),
             audio: None,
@@ -376,6 +387,13 @@ impl State {
                 let action = key_action(VIRTUAL_KEY(wp.0 as u16))?;
                 self.act(action);
             }
+            WM_APP_KEY => {
+                if let Some(action) = key_action(VIRTUAL_KEY(wp.0 as u16)) {
+                    self.act(action);
+                }
+            }
+            // A click must not take the foreground from the game either.
+            WM_MOUSEACTIVATE if self.passive => return Some(LRESULT(MA_NOACTIVATE as isize)),
             WM_LBUTTONUP => {
                 let x = (lp.0 & 0xFFFF) as i16 as f32 / self.scale;
                 let y = ((lp.0 >> 16) & 0xFFFF) as i16 as f32 / self.scale;
@@ -450,7 +468,11 @@ impl State {
             Phase::Hiding => {
                 self.phase = Phase::Shown;
                 self.fade = self.fade.retarget(1.0, now, FADE_IN);
-                system::bring_to_front(self.hwnd);
+                if self.passive {
+                    self.key_hook = KeyHook::install(self.hwnd);
+                } else {
+                    system::bring_to_front(self.hwnd);
+                }
                 return;
             }
             Phase::Hidden => {}
@@ -484,17 +506,35 @@ impl State {
         self.refresh_outputs();
         self.refresh_stats();
 
+        // Exclusive-fullscreen games minimise when they lose the foreground,
+        // so over one the overlay leaves focus alone and hooks the keyboard.
+        self.passive = system::exclusive_fullscreen();
+        if self.passive {
+            self.key_hook = KeyHook::install(self.hwnd);
+            // Without the hook the keyboard can't reach the overlay; taking
+            // focus is the lesser evil.
+            self.passive = self.key_hook.is_some();
+        }
+
         self.phase = Phase::Shown;
         self.fade = Fade::new(0.0, 1.0, now, FADE_IN);
         self.render();
-        // SAFETY: showing our own window.
-        unsafe {
-            let _ = ShowWindow(self.hwnd, SW_SHOW);
-        }
-        if !system::bring_to_front(self.hwnd) {
-            tracing::warn!(
-                "overlay could not take the foreground; keyboard input may not reach it"
-            );
+        if self.passive {
+            // SAFETY: showing our own window without activating it.
+            unsafe {
+                let _ = ShowWindow(self.hwnd, SW_SHOWNA);
+            }
+            tracing::info!("exclusive-fullscreen game in front: overlay shown without focus");
+        } else {
+            // SAFETY: showing our own window.
+            unsafe {
+                let _ = ShowWindow(self.hwnd, SW_SHOW);
+            }
+            if !system::bring_to_front(self.hwnd) {
+                tracing::warn!(
+                    "overlay could not take the foreground; keyboard input may not reach it"
+                );
+            }
         }
         self.gamepad.prime(&self.pads.poll());
         // SAFETY: timers on our own window.
@@ -539,6 +579,8 @@ impl State {
         }
         self.phase = Phase::Hiding;
         self.model.confirm = None;
+        // Keys typed during the fade-out belong to the game again.
+        self.key_hook = None;
         self.fade = self.fade.retarget(0.0, Instant::now(), FADE_OUT);
         // SAFETY: plain FFI calls on window handles; a stale one fails.
         let restore = restore_focus
@@ -559,6 +601,8 @@ impl State {
             }
         }
         self.thumbs.clear();
+        self.key_hook = None;
+        self.passive = false;
         self.gfx = None;
         self.audio = None;
         self.stats = None;
@@ -572,6 +616,15 @@ impl State {
 
     fn frame(&mut self) {
         let now = Instant::now();
+        if self.phase == Phase::Shown && self.passive {
+            // Without focus there is no WM_ACTIVATE: close the same way when
+            // something else (Alt+Tab, a notification) takes the foreground.
+            // SAFETY: plain FFI call.
+            let fg = unsafe { GetForegroundWindow() };
+            if fg != self.previous && fg != self.hwnd {
+                self.begin_hide(false);
+            }
+        }
         if self.phase == Phase::Shown {
             let pads = self.pads.poll();
             for a in self.gamepad.update(&pads, now) {
@@ -784,7 +837,8 @@ impl State {
 
 fn key_action(vk: VIRTUAL_KEY) -> Option<Action> {
     // SAFETY: plain FFI call.
-    let shift = unsafe { GetKeyState(i32::from(VK_SHIFT.0)) } < 0;
+    // Async state: without focus this thread's own key state never updates.
+    let shift = unsafe { GetAsyncKeyState(i32::from(VK_SHIFT.0)) } < 0;
     Some(match vk {
         VK_UP => Action::Up,
         VK_DOWN => Action::Down,

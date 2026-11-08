@@ -18,6 +18,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_MENU,
 };
 use windows::Win32::UI::Input::XboxController::{XINPUT_STATE, XInputGetState};
+use windows::Win32::UI::Shell::{QUNS_RUNNING_D3D_FULL_SCREEN, SHQueryUserNotificationState};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GW_OWNER, GWL_EXSTYLE, GetClassNameW, GetForegroundWindow, GetWindow,
     GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
@@ -274,4 +275,14 @@ impl Pads {
         }
         out
     }
+}
+
+/// Whether a Direct3D app is in exclusive fullscreen right now (what Windows
+/// itself checks before showing notifications over it).
+pub fn exclusive_fullscreen() -> bool {
+    // SAFETY: plain FFI call.
+    matches!(
+        unsafe { SHQueryUserNotificationState() },
+        Ok(QUNS_RUNNING_D3D_FULL_SCREEN)
+    )
 }
