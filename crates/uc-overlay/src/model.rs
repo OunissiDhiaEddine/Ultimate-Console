@@ -3,6 +3,7 @@
 //! gamepad buttons into [`Action`]s, and carries out the [`Effect`]s it returns.
 
 use uc_audio::{AppSession, AudioDevice};
+use uc_battery::Device;
 use uc_sysinfo::{ProcessStats, Snapshot};
 
 /// One step of the volume sliders (5 %).
@@ -19,10 +20,18 @@ pub enum Tab {
     Output,
     /// Stats of the selected task and the current display mode.
     Info,
+    /// Battery levels of controllers, headsets, mice …
+    Battery,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Volume, Tab::Tasks, Tab::Output, Tab::Info];
+    pub const ALL: [Tab; 5] = [
+        Tab::Volume,
+        Tab::Tasks,
+        Tab::Output,
+        Tab::Info,
+        Tab::Battery,
+    ];
 
     pub fn title(self) -> &'static str {
         match self {
@@ -30,6 +39,7 @@ impl Tab {
             Tab::Tasks => "Tasks",
             Tab::Output => "Output",
             Tab::Info => "Info",
+            Tab::Battery => "Battery",
         }
     }
 
@@ -101,6 +111,8 @@ pub enum Effect {
     },
     /// Make this endpoint ([`AudioDevice::id`]) the default output.
     SetDefaultOutput(String),
+    /// Read the batteries again now instead of at the next interval.
+    RescanBatteries,
 }
 
 /// A question shown on top of the panels.
@@ -132,6 +144,14 @@ pub struct Outputs {
     pub devices: Vec<AudioDevice>,
     /// Shown instead of the list when audio is unavailable.
     pub error: Option<String>,
+}
+
+/// What the battery panel shows.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Batteries {
+    pub devices: Vec<Device>,
+    /// False until the first scan since the overlay started has finished.
+    pub scanned: bool,
 }
 
 /// Mode of the display the overlay is on.
@@ -206,6 +226,9 @@ pub struct Model {
     pub output_row: usize,
     /// `None` until read, or when Windows can't tell.
     pub display: Option<DisplayMode>,
+    pub batteries: Batteries,
+    /// Index into `batteries.devices`.
+    pub battery_row: usize,
     pub confirm: Option<Confirm>,
 }
 
@@ -225,6 +248,7 @@ impl Model {
         self.scroll_row = 0;
         self.volume_row = 0;
         self.output_row = 0;
+        self.battery_row = 0;
         self.confirm = None;
     }
 
@@ -281,6 +305,23 @@ impl Model {
             keep.as_deref().and_then(by_id)
         }
         .unwrap_or_else(|| self.output_row.min(devices.len().saturating_sub(1)));
+    }
+
+    /// Replace the battery list, keeping the cursor on the same device.
+    pub fn set_batteries(&mut self, devices: Vec<Device>) {
+        let keep = self
+            .batteries
+            .devices
+            .get(self.battery_row)
+            .map(|d| d.name.clone());
+        self.batteries = Batteries {
+            devices,
+            scanned: true,
+        };
+        let devices = &self.batteries.devices;
+        self.battery_row = keep
+            .and_then(|n| devices.iter().position(|d| d.name == n))
+            .unwrap_or_else(|| self.battery_row.min(devices.len().saturating_sub(1)));
     }
 
     /// Master first, then the selected task's app, then every other app.
@@ -378,6 +419,7 @@ impl Model {
                     Tab::Volume => self.volume_nav(action),
                     Tab::Output => self.output_nav(action),
                     Tab::Info => self.info_nav(action),
+                    Tab::Battery => self.battery_nav(action),
                 }
             }
         }
@@ -440,6 +482,20 @@ impl Model {
                 return vec![Effect::SetDefaultOutput(
                     self.outputs.devices[row].id.clone(),
                 )];
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    /// Up/Down move along the list; A reads the batteries again now.
+    fn battery_nav(&mut self, action: Action) -> Vec<Effect> {
+        let n = self.batteries.devices.len();
+        match action {
+            Action::Accept => return vec![Effect::RescanBatteries],
+            Action::Up | Action::Left => self.battery_row = self.battery_row.saturating_sub(1),
+            Action::Down | Action::Right => {
+                self.battery_row = (self.battery_row + 1).min(n.saturating_sub(1));
             }
             _ => {}
         }
@@ -590,7 +646,7 @@ mod tests {
         let mut m = Model::new(4);
         assert_eq!(m.tab, Tab::Volume);
         m.handle(Action::PrevTab);
-        assert_eq!(m.tab, Tab::Info);
+        assert_eq!(m.tab, Tab::Battery);
         m.handle(Action::NextTab);
         assert_eq!(m.tab, Tab::Volume);
         m.handle(Action::NextTab);
@@ -824,6 +880,40 @@ mod tests {
         m.selected = 1;
         m.ensure_visible(2);
         assert_eq!(m.scroll_row, 0);
+    }
+
+    #[test]
+    fn battery_is_the_last_tab() {
+        assert_eq!(Tab::ALL.last(), Some(&Tab::Battery));
+    }
+
+    fn battery(name: &str) -> Device {
+        Device {
+            name: name.into(),
+            kind: uc_battery::Kind::Controller,
+            level: Some(uc_battery::Level::Percent(50)),
+            power: uc_battery::Power::Discharging,
+            source: uc_battery::Source::GamingInput,
+        }
+    }
+
+    #[test]
+    fn battery_panel_navigation_and_rescan() {
+        let mut m = Model::new(4);
+        m.tab = Tab::Battery;
+        assert!(!m.batteries.scanned);
+        assert!(m.handle(Action::Down).is_empty());
+        assert_eq!(m.battery_row, 0);
+        m.set_batteries(vec![battery("Pad"), battery("G305"), battery("Buds")]);
+        assert!(m.batteries.scanned);
+        m.handle(Action::Down);
+        m.handle(Action::Down);
+        m.handle(Action::Down);
+        assert_eq!(m.battery_row, 2);
+        // The list changes: the cursor stays on "Buds".
+        m.set_batteries(vec![battery("Buds"), battery("Pad")]);
+        assert_eq!(m.battery_row, 0);
+        assert_eq!(m.handle(Action::Accept), vec![Effect::RescanBatteries]);
     }
 
     #[test]

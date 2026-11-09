@@ -135,7 +135,8 @@ impl Layout {
     }
 
     pub fn tab(&self, i: usize) -> Rect {
-        let w = 150.0;
+        // Tabs share the header on a narrow card.
+        let w = (self.header.w * 0.8 / Tab::ALL.len() as f32).min(150.0);
         Rect::new(
             self.header.x + i as f32 * w,
             self.header.y,
