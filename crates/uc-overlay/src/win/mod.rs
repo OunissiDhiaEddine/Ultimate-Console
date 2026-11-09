@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::JoinHandle;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -24,12 +24,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetForegroundWindow,
-    GetMessageW, HWND_TOPMOST, IDC_ARROW, IsWindow, KillTimer, LoadCursorW, MA_NOACTIVATE, MSG,
-    PostMessageW, PostQuitMessage, RegisterClassExW, SW_HIDE, SW_SHOW, SW_SHOWNA, SWP_NOACTIVATE,
-    SetTimer, SetWindowPos, ShowWindow, TranslateMessage, WA_INACTIVE, WM_ACTIVATE, WM_APP,
-    WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_KEYDOWN, WM_LBUTTONUP,
-    WM_MOUSEACTIVATE, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW, WS_EX_NOREDIRECTIONBITMAP,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    GetMessageW, HWND_TOPMOST, IDC_ARROW, IsIconic, IsWindow, KillTimer, LoadCursorW,
+    MA_NOACTIVATE, MSG, PostMessageW, PostQuitMessage, RegisterClassExW, SW_HIDE, SW_SHOW,
+    SW_SHOWNA, SWP_NOACTIVATE, SetTimer, SetWindowPos, ShowWindow, TranslateMessage, WA_INACTIVE,
+    WM_ACTIVATE, WM_APP, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_KEYDOWN,
+    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSEXW,
+    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::w;
 
@@ -61,6 +61,10 @@ const TIMER_REFRESH: usize = 3;
 const FRAME_MS: u32 = 16;
 /// Delay before re-listing windows after a close/kill, so the window is gone.
 const REFRESH_MS: u32 = 400;
+/// A foreground change this soon after opening over a fullscreen game is the
+/// game reacting to the overlay (dropping out of exclusive fullscreen), not
+/// the user switching away.
+const PASSIVE_GRACE: Duration = Duration::from_millis(1500);
 
 /// Handle to the overlay. `Send + Sync`; every method just posts a message
 /// to the overlay's UI thread and returns. Dropping it closes the window
@@ -290,6 +294,7 @@ struct State {
     /// would minimise itself); the keyboard comes through `key_hook`.
     passive: bool,
     key_hook: Option<KeyHook>,
+    shown_at: Instant,
     gfx: Option<Gfx>,
     thumbs: Thumbs,
     audio: Option<Box<dyn uc_audio::AudioControl>>,
@@ -332,6 +337,7 @@ impl State {
             previous: HWND::default(),
             passive: false,
             key_hook: None,
+            shown_at: Instant::now(),
             gfx: None,
             thumbs: Thumbs::default(),
             audio: None,
@@ -517,6 +523,7 @@ impl State {
         }
 
         self.phase = Phase::Shown;
+        self.shown_at = now;
         self.fade = Fade::new(0.0, 1.0, now, FADE_IN);
         self.render();
         if self.passive {
@@ -582,12 +589,16 @@ impl State {
         // Keys typed during the fade-out belong to the game again.
         self.key_hook = None;
         self.fade = self.fade.retarget(0.0, Instant::now(), FADE_OUT);
+        // Give the game back even if it minimised itself when the overlay
+        // appeared (true exclusive fullscreen does that to any window on
+        // top): restore it and put it in front again.
         // SAFETY: plain FFI calls on window handles; a stale one fails.
         let restore = restore_focus
-            && unsafe { GetForegroundWindow() } == self.hwnd
-            && unsafe { IsWindow(Some(self.previous)) }.as_bool();
+            && unsafe { IsWindow(Some(self.previous)) }.as_bool()
+            && (unsafe { GetForegroundWindow() } == self.hwnd
+                || unsafe { IsIconic(self.previous) }.as_bool());
         if restore {
-            system::bring_to_front(self.previous);
+            system::switch_to(self.previous);
         }
     }
 
@@ -617,12 +628,27 @@ impl State {
     fn frame(&mut self) {
         let now = Instant::now();
         if self.phase == Phase::Shown && self.passive {
-            // Without focus there is no WM_ACTIVATE: close the same way when
-            // something else (Alt+Tab, a notification) takes the foreground.
-            // SAFETY: plain FFI call.
+            // Without focus there is no WM_ACTIVATE, so watch the foreground.
+            // SAFETY: plain FFI calls on window handles.
             let fg = unsafe { GetForegroundWindow() };
-            if fg != self.previous && fg != self.hwnd {
-                self.begin_hide(false);
+            if !fg.is_invalid() && fg != self.previous && fg != self.hwnd {
+                let game_left = unsafe { IsIconic(self.previous) }.as_bool()
+                    || now.duration_since(self.shown_at) < PASSIVE_GRACE;
+                if game_left {
+                    // A true exclusive-fullscreen game drops out as soon as
+                    // any window is on top of it, focus or not. Nothing to
+                    // protect any more: take focus like over any other app,
+                    // and give the game back on close.
+                    tracing::info!(
+                        "the game left fullscreen under the overlay; overlay takes focus"
+                    );
+                    self.passive = false;
+                    self.key_hook = None;
+                    system::bring_to_front(self.hwnd);
+                } else {
+                    // Alt+Tab or similar: close like WM_ACTIVATE would.
+                    self.begin_hide(false);
+                }
             }
         }
         if self.phase == Phase::Shown {

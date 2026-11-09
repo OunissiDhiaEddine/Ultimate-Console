@@ -5,16 +5,16 @@
 //! It never takes focus (`WS_EX_NOACTIVATE`, shown with `SWP_NOACTIVATE`), so
 //! the game or Big Picture keeps the keyboard and controller.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, HWND_TOPMOST, KillTimer, MA_NOACTIVATE,
-    RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SetTimer,
-    SetWindowPos, ShowWindow, WM_MOUSEACTIVATE, WNDCLASSEXW, WS_EX_NOACTIVATE,
-    WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetForegroundWindow, HWND_TOPMOST, IsIconic,
+    KillTimer, MA_NOACTIVATE, RegisterClassExW, SW_HIDE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_SHOWWINDOW, SetTimer, SetWindowPos, ShowWindow, WM_MOUSEACTIVATE, WNDCLASSEXW,
+    WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::w;
 
@@ -28,6 +28,8 @@ use crate::{AudioFactory, Error, Result};
 pub const TIMER_OSD_FRAME: usize = 10;
 pub const TIMER_OSD_HIDE: usize = 11;
 const FRAME_MS: u32 = 16;
+/// How long after opening a game minimising itself counts as the popup's doing.
+const KNOCKOUT_GRACE: Duration = Duration::from_millis(1500);
 
 pub struct Osd {
     hwnd: HWND,
@@ -42,6 +44,12 @@ pub struct Osd {
     last_opacity: f32,
     /// On screen or fading out.
     shown: bool,
+    /// The window in front when the popup opened, and when.
+    front: HWND,
+    opened_at: Instant,
+    /// A window that dropped out of fullscreen because of the popup: no
+    /// popup over it again (just the volume change).
+    no_popup_over: HWND,
 }
 
 impl Osd {
@@ -60,12 +68,23 @@ impl Osd {
             fade: Fade::settled(0.0, Instant::now()),
             last_opacity: 0.0,
             shown: false,
+            front: HWND::default(),
+            opened_at: Instant::now(),
+            no_popup_over: HWND::default(),
         })
     }
 
     /// A volume key was pressed: change the volume and show the popup.
     pub fn key(&mut self, key: VolumeKey) {
         self.view = self.change_volume(key);
+        // SAFETY: plain FFI call.
+        let front = unsafe { GetForegroundWindow() };
+        if !self.shown && (front == self.no_popup_over || system::exclusive_fullscreen()) {
+            // Any window on top of a true exclusive-fullscreen game knocks it
+            // out of fullscreen (focus or not), so just change the volume.
+            tracing::debug!("exclusive-fullscreen game in front: volume popup skipped");
+            return;
+        }
         if !self.shown {
             if !self.open() {
                 return;
@@ -135,6 +154,9 @@ impl Osd {
     /// objects and start fading in.
     fn open(&mut self) -> bool {
         let mon = system::foreground_monitor();
+        // SAFETY: plain FFI call.
+        self.front = unsafe { GetForegroundWindow() };
+        self.opened_at = Instant::now();
         // SAFETY: plain FFI call on our own window. Its DPI follows the
         // monitor it is on, so position it there first, then size it.
         let place = |x, y, w, h| unsafe {
@@ -215,6 +237,17 @@ impl Osd {
 
     fn frame(&mut self) {
         let now = Instant::now();
+        let watching = now.duration_since(self.opened_at) < KNOCKOUT_GRACE;
+        // SAFETY: plain FFI call; a stale handle just reads as not iconic.
+        if self.shown && watching && unsafe { IsIconic(self.front) }.as_bool() {
+            // A true exclusive-fullscreen game minimises when any window is
+            // on top of it. Get out of its way and give it back.
+            tracing::info!("the game left fullscreen under the volume popup; restoring it");
+            self.no_popup_over = self.front;
+            self.close();
+            system::switch_to(self.front);
+            return;
+        }
         let opacity = self.fade.value(now);
         if opacity != self.last_opacity {
             self.last_opacity = opacity;
@@ -224,7 +257,7 @@ impl Osd {
                 tracing::warn!("volume popup opacity failed: {e}");
             }
         }
-        if self.fade.done(now) {
+        if self.fade.done(now) && !watching {
             // SAFETY: the fade is over; stop the frame timer until the next one.
             let _ = unsafe { KillTimer(Some(self.timers), TIMER_OSD_FRAME) };
             if self.fade.target() == 0.0 {
