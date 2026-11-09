@@ -11,7 +11,8 @@ use windows::Win32::Graphics::Gdi::{
     MonitorFromWindow,
 };
 use windows::Win32::System::Threading::{
-    GetCurrentProcessId, OpenProcess, PROCESS_TERMINATE, TerminateProcess,
+    AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId, OpenProcess, PROCESS_TERMINATE,
+    TerminateProcess,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
@@ -20,10 +21,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::Input::XboxController::{XINPUT_STATE, XInputGetState};
 use windows::Win32::UI::Shell::{QUNS_RUNNING_D3D_FULL_SCREEN, SHQueryUserNotificationState};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GW_OWNER, GWL_EXSTYLE, GetClassNameW, GetForegroundWindow, GetWindow,
-    GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-    PostMessageW, SW_RESTORE, SetForegroundWindow, ShowWindow, WM_CLOSE, WS_EX_APPWINDOW,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    BringWindowToTop, EnumWindows, GW_OWNER, GWL_EXSTYLE, GetClassNameW, GetForegroundWindow,
+    GetWindow, GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+    IsWindowVisible, PostMessageW, SW_RESTORE, SetForegroundWindow, ShowWindow, WM_CLOSE,
+    WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
 use windows::core::{BOOL, PCWSTR};
 
@@ -126,15 +127,34 @@ fn tap_alt() {
     unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
 }
 
-/// Make `hwnd` the foreground window, using the Alt trick if needed.
+/// Make `hwnd` the foreground window, using the Alt trick and then input
+/// attachment if Windows' foreground lock refuses (the overlay often isn't
+/// the foreground process when it switches tasks).
 pub fn bring_to_front(hwnd: HWND) -> bool {
-    // SAFETY: plain FFI calls on a window handle.
+    // SAFETY: plain FFI calls on window handles and thread ids.
     unsafe {
-        if SetForegroundWindow(hwnd).as_bool() && GetForegroundWindow() == hwnd {
+        let ok = || GetForegroundWindow() == hwnd;
+        if SetForegroundWindow(hwnd).as_bool() && ok() {
             return true;
         }
         tap_alt();
-        SetForegroundWindow(hwnd).as_bool()
+        if SetForegroundWindow(hwnd).as_bool() && ok() {
+            return true;
+        }
+        // Share the foreground thread's input state for a moment, which
+        // lets us hand the foreground on.
+        let fg_thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
+        let me = GetCurrentThreadId();
+        if fg_thread == 0 || fg_thread == me {
+            return ok();
+        }
+        let attached = AttachThreadInput(me, fg_thread, true).as_bool();
+        let _ = BringWindowToTop(hwnd);
+        let _ = SetForegroundWindow(hwnd);
+        if attached {
+            let _ = AttachThreadInput(me, fg_thread, false);
+        }
+        ok()
     }
 }
 
