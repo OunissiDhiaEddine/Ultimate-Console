@@ -43,7 +43,7 @@ use crate::gamepad::Gamepad;
 use crate::layout::{Hit, Layout};
 use crate::model::{Action, Effect, Master, Model, Outputs, Tab, Volume};
 use crate::osd::VolumeKey;
-use crate::{Backends, Error, Result, Settings};
+use crate::{BATTERY_INTERVAL, Backends, Error, Result, Settings};
 
 const WM_APP_SHOW: u32 = WM_APP + 1;
 const WM_APP_HIDE: u32 = WM_APP + 2;
@@ -54,6 +54,8 @@ const WM_APP_QUIT: u32 = WM_APP + 5;
 const WM_APP_VOLUME_KEY: u32 = WM_APP + 6;
 /// wparam: a virtual-key code from [`keyhook`], while shown without focus.
 const WM_APP_KEY: u32 = WM_APP + 7;
+/// The battery monitor finished a scan.
+const WM_APP_BATTERY: u32 = WM_APP + 8;
 
 const TIMER_FRAME: usize = 1;
 const TIMER_SAMPLE: usize = 2;
@@ -304,6 +306,8 @@ struct State {
     gamepad: Gamepad,
     /// The volume popup; `None` if its window could not be created.
     osd: Option<Osd>,
+    /// Reads batteries while the Battery panel is open.
+    battery: Option<uc_battery::Monitor>,
 }
 
 impl State {
@@ -346,6 +350,7 @@ impl State {
             pads: Pads::new(),
             gamepad: Gamepad::default(),
             osd,
+            battery: None,
         }
     }
 
@@ -396,6 +401,12 @@ impl State {
             WM_APP_KEY => {
                 if let Some(action) = key_action(VIRTUAL_KEY(wp.0 as u16)) {
                     self.act(action);
+                }
+            }
+            WM_APP_BATTERY => {
+                if let Some(devices) = self.battery.as_ref().and_then(|m| m.latest()) {
+                    self.model.set_batteries(devices);
+                    self.dirty = true;
                 }
             }
             // A click must not take the foreground from the game either.
@@ -479,6 +490,7 @@ impl State {
                 } else {
                     system::bring_to_front(self.hwnd);
                 }
+                self.sync_battery();
                 return;
             }
             Phase::Hidden => {}
@@ -588,6 +600,7 @@ impl State {
         self.model.confirm = None;
         // Keys typed during the fade-out belong to the game again.
         self.key_hook = None;
+        self.battery = None;
         self.fade = self.fade.retarget(0.0, Instant::now(), FADE_OUT);
         // Give the game back even if it minimised itself when the overlay
         // appeared (true exclusive fullscreen does that to any window on
@@ -613,6 +626,7 @@ impl State {
         }
         self.thumbs.clear();
         self.key_hook = None;
+        self.battery = None;
         self.passive = false;
         self.gfx = None;
         self.audio = None;
@@ -796,6 +810,32 @@ impl State {
         for e in effects {
             self.apply(e);
         }
+        self.sync_battery();
+    }
+
+    /// Run the battery monitor only while the Battery panel is on screen.
+    fn sync_battery(&mut self) {
+        let wanted = self.phase == Phase::Shown && self.model.tab == Tab::Battery;
+        if !wanted {
+            self.battery = None;
+        } else if self.battery.is_none() {
+            self.start_battery();
+        }
+    }
+
+    fn start_battery(&mut self) {
+        let hwnd = self.hwnd.0 as isize;
+        let notify = move || {
+            // SAFETY: posting to our overlay window; if it is gone the call
+            // just fails.
+            let _ = unsafe {
+                PostMessageW(Some(HWND(hwnd as _)), WM_APP_BATTERY, WPARAM(0), LPARAM(0))
+            };
+        };
+        match uc_battery::Monitor::start(self.backends.battery.clone(), BATTERY_INTERVAL, notify) {
+            Ok(m) => self.battery = Some(m),
+            Err(e) => tracing::warn!("battery monitor failed to start: {e}"),
+        }
     }
 
     fn apply(&mut self, effect: Effect) {
@@ -819,6 +859,12 @@ impl State {
                 self.audio_call(|a| a.set_app_volume(pid, level))
             }
             Effect::SetAppMuted { pid, muted } => self.audio_call(|a| a.set_app_muted(pid, muted)),
+            Effect::RescanBatteries => {
+                // A fresh monitor scans right away; the old one's scan in
+                // flight is dropped.
+                self.battery = None;
+                self.start_battery();
+            }
             Effect::SetDefaultOutput(id) => {
                 self.audio_call(|a| a.set_default_output(&id));
                 if let Some(Ok(Some(d))) = self.audio.as_ref().map(|a| a.default_output()) {
@@ -880,7 +926,7 @@ fn key_action(vk: VIRTUAL_KEY) -> Option<Action> {
         VK_OEM_PLUS | VK_ADD => Action::VolumeUp,
         VK_OEM_MINUS | VK_SUBTRACT => Action::VolumeDown,
         VIRTUAL_KEY(k) if k == u16::from(b'M') => Action::ToggleMute,
-        VIRTUAL_KEY(k) if (u16::from(b'1')..=u16::from(b'4')).contains(&k) => {
+        VIRTUAL_KEY(k) if (u16::from(b'1')..=u16::from(b'5')).contains(&k) => {
             Action::SelectTab(usize::from(k - u16::from(b'1')))
         }
         _ => return None,

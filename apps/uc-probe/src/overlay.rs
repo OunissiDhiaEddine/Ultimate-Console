@@ -99,6 +99,36 @@ fn fake_backends() -> Backends {
                 }],
             })) as Box<dyn StatsSource>
         }),
+        battery: Arc::new(|| {
+            use uc_battery::{Device, Kind, Level, Power, Source};
+            let d = |name: &str, kind, level, power| Device {
+                name: name.into(),
+                kind,
+                level,
+                power,
+                source: Source::GamingInput,
+            };
+            vec![
+                d(
+                    "Xbox Wireless Controller",
+                    Kind::Controller,
+                    Some(Level::Percent(64)),
+                    Power::Discharging,
+                ),
+                d(
+                    "G535 Wireless Gaming Headset",
+                    Kind::Headset,
+                    Some(Level::Percent(15)),
+                    Power::Discharging,
+                ),
+                d(
+                    "G305",
+                    Kind::Mouse,
+                    Some(Level::Percent(80)),
+                    Power::Charging,
+                ),
+            ]
+        }),
     }
 }
 

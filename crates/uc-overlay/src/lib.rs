@@ -24,6 +24,11 @@
 //!    `config.overlay.sample_interval_ms`, plus the current resolution and
 //!    refresh rate of the display. The system line is in the footer of
 //!    every panel.
+//! 5. **Battery**: controllers, headsets, mice and other wireless devices
+//!    with their battery level, read straight from Windows by [`uc_battery`].
+//!    Devices are only read while this panel is open: on opening, a
+//!    couple of seconds later, then every [`BATTERY_INTERVAL`]; A reads them
+//!    again now.
 //!
 //! A separate small **volume popup** ([`osd`]) shows the master volume for a
 //! couple of seconds when [`Overlay::volume_key`] is called (volume keys in
@@ -104,20 +109,26 @@ pub type AudioFactory = Arc<dyn Fn() -> uc_audio::Result<Box<dyn AudioControl>> 
 /// Builds a stats source on the overlay thread each time it opens.
 pub type StatsFactory = Arc<dyn Fn() -> Box<dyn StatsSource> + Send + Sync>;
 
+/// How often the Battery panel reads the devices while it is open.
+pub const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
+
 /// Where the volume and stats panels get their data. [`Backends::real`] for
 /// the agent; tests and `uc-probe overlay --fake` pass fakes.
 #[derive(Clone)]
 pub struct Backends {
     pub audio: AudioFactory,
     pub stats: StatsFactory,
+    /// Reads the batteries, on the battery monitor's thread.
+    pub battery: uc_battery::Scanner,
 }
 
 impl Backends {
-    /// Core Audio and the PDH/`GetProcessTimes` sampler.
+    /// Core Audio, the PDH/`GetProcessTimes` sampler and the Windows battery sources.
     pub fn real() -> Self {
         Self {
             audio: Arc::new(|| Ok(Box::new(uc_audio::CoreAudio::new()?) as Box<dyn AudioControl>)),
             stats: Arc::new(|| Box::new(uc_sysinfo::Sampler::new()) as Box<dyn StatsSource>),
+            battery: uc_battery::real_scanner(),
         }
     }
 }

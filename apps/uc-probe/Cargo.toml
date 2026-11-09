@@ -15,11 +15,13 @@ uc-shell.workspace = true
 uc-power.workspace = true
 uc-audio.workspace = true
 uc-sysinfo.workspace = true
+uc-battery.workspace = true
 uc-overlay.workspace = true
 uc-update.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [

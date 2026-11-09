@@ -43,6 +43,7 @@ use windows::core::{Interface, PCWSTR, Result, w};
 use crate::layout::{Layout, ROW_H, Rect};
 use crate::model::{Confirm, Model, Tab, VolumeRow};
 use crate::osd;
+use uc_battery::Kind;
 
 #[derive(Clone, Copy)]
 struct Rgba(f32, f32, f32, f32);
@@ -396,6 +397,10 @@ impl Gfx {
             Tab::Tasks if !model.tasks.is_empty() => {
                 format!("{} / {}", model.selected + 1, model.tasks.len())
             }
+            Tab::Battery => format!(
+                "Updates every {} s while open",
+                crate::BATTERY_INTERVAL.as_secs()
+            ),
             _ => String::new(),
         };
         self.text(&header_info, &f.small_right, l.header, DIM);
@@ -405,6 +410,7 @@ impl Gfx {
             Tab::Volume => self.volume(model, l),
             Tab::Output => self.output(model, l),
             Tab::Info => self.info(model, l),
+            Tab::Battery => self.battery(model, l),
         }
 
         self.footer(model, l);
@@ -567,6 +573,73 @@ impl Gfx {
         }
     }
 
+    fn battery(&self, model: &Model, l: &Layout) {
+        let f = &self.fonts;
+        let devices = &model.batteries.devices;
+        if devices.is_empty() {
+            let msg = if model.batteries.scanned {
+                "No wireless device with a battery found"
+            } else {
+                "Reading batteries…"
+            };
+            self.text(msg, &f.body_center, l.body, DIM);
+            return;
+        }
+        let visible = l.volume_rows_visible();
+        let first = (model.battery_row + 1).saturating_sub(visible);
+        for (i, d) in devices.iter().enumerate().skip(first).take(visible) {
+            let y = l.body.y + (i - first) as f32 * ROW_H;
+            let r = Rect::new(l.body.x, y, l.body.w, ROW_H - 8.0);
+            if i == model.battery_row {
+                self.fill(r, 10.0, TILE_SELECTED);
+                self.fill(Rect::new(r.x, r.y + 12.0, 4.0, r.h - 24.0), 2.0, ACCENT);
+            }
+            // Segoe MDL2 Assets: Game, Headphone, Mouse, Keyboard, Devices.
+            let glyph = match d.kind {
+                Kind::Controller => "\u{E7FC}",
+                Kind::Headset => "\u{E7F6}",
+                Kind::Mouse => "\u{E962}",
+                Kind::Keyboard => "\u{E765}",
+                Kind::Other => "\u{E772}",
+            };
+            self.text(glyph, &f.icon, Rect::new(r.x + 18.0, r.y, 36.0, r.h), DIM);
+            let label_w = (r.w * 0.38).min(400.0);
+            self.text(
+                &d.name,
+                &f.body,
+                Rect::new(r.x + 64.0, r.y, label_w - 64.0, r.h),
+                TEXT,
+            );
+
+            let value_w = 190.0;
+            let track = Rect::new(
+                r.x + label_w + 12.0,
+                r.y + r.h / 2.0 - 4.0,
+                (r.w - label_w - value_w - 36.0).max(10.0),
+                8.0,
+            );
+            self.fill(track, 4.0, TRACK);
+            let fill_color = if d.is_low() { DANGER } else { ACCENT };
+            if let Some(frac) = d.fraction() {
+                let fill = Rect::new(track.x, track.y, track.w * frac.clamp(0.0, 1.0), track.h);
+                self.fill(fill, 4.0, fill_color);
+            }
+            let power = d.power_text();
+            let value = if power.is_empty() {
+                d.level_text()
+            } else {
+                format!("{}  {power}", d.level_text())
+            };
+            let vr = Rect::new(r.right() - value_w - 16.0, r.y, value_w, r.h);
+            let color = match () {
+                _ if d.is_low() => DANGER,
+                _ if d.fraction().is_none() => DIM,
+                _ => TEXT,
+            };
+            self.text(&value, &f.body_right, vr, color);
+        }
+    }
+
     /// Label / value rows starting at (`x`, `top`), `w` wide.
     fn kv_rows(&self, rows: &[(&str, String)], x: f32, top: f32, w: f32, bottom: f32) {
         let f = &self.fonts;
@@ -688,6 +761,7 @@ impl Gfx {
             Tab::Volume => "◀ ▶ Adjust   A Mute   LT/RT Master   LB/RB Panels   B Back",
             Tab::Output => "▲ ▼ Choose   A Use this device   LB/RB Panels   B Back",
             Tab::Info => "◀ ▶ Task   A Switch   LB/RB Panels   B Back",
+            Tab::Battery => "▲ ▼ Choose   A Refresh   LB/RB Panels   B Back",
         };
         self.text(
             hints,

@@ -76,6 +76,12 @@ enum Command {
     Update(update::UpdateCmd),
     /// Show the overlay on the desktop, toggled by its hotkey (WP-07).
     Overlay(overlay::OverlayArgs),
+    /// Read controller, headset and mouse batteries once, like the overlay's
+    /// Battery panel. `--verbose` explains devices that were skipped.
+    Battery {
+        #[arg(long)]
+        verbose: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -206,8 +212,36 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             count,
             interval,
         } => sysinfo(&pids, count, interval),
+        Command::Battery { verbose } => battery(verbose),
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn battery(verbose: bool) {
+    if verbose {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter("uc_battery=debug")
+            .with_writer(std::io::stderr)
+            .try_init();
+    }
+    // Windows.Gaming.Input lists controllers a moment after the first ask.
+    let _ = uc_battery::scan();
+    std::thread::sleep(uc_battery::WARM_UP);
+    let devices = uc_battery::scan();
+    if devices.is_empty() {
+        println!("no wireless device with a battery found");
+    }
+    for d in devices {
+        let power = d.power_text();
+        println!(
+            "{:<40} {:>8} {:<9} {:?} / {:?}",
+            d.name,
+            d.level_text(),
+            power,
+            d.kind,
+            d.source
+        );
+    }
 }
 
 fn audio(cmd: AudioCmd) -> Result<(), Box<dyn std::error::Error>> {
