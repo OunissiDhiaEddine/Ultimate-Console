@@ -45,6 +45,12 @@ pub enum TvError {
         reason: String,
     },
 
+    #[error("Broadlink: {0}")]
+    Broadlink(String),
+
+    #[error("tv.broadlink_packet is not valid hex")]
+    BadIrPacket,
+
     #[error(transparent)]
     Core(#[from] uc_core::Error),
 }

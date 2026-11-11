@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::mem::Discriminant;
 
 use eframe::egui::{self, Color32, RichText, Ui};
-use uc_core::config::{DisplayId, DisplayMode, Hotkeys};
+use uc_core::config::{DisplayId, DisplayMode, Hotkeys, PowerOn};
 use uc_core::hotkey;
 use uc_core::ipc::{IpcRequest, TvCommand, TvPowerState, UpdateStatus};
 use uc_core::{Config, Mode};
@@ -568,30 +568,75 @@ impl App {
             120,
         );
 
-        section(ui, "Wake-on-LAN");
-        ui.checkbox(
-            &mut d.tv.wol_enabled,
-            "Send a Wake-on-LAN packet before waking",
-        );
-        ui.add_enabled_ui(d.tv.wol_enabled, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("TV MAC");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.fields.tv_mac)
-                        .hint_text("AA:BB:CC:DD:EE:FF")
-                        .desired_width(160.0),
-                );
-            });
-            ui.horizontal(|ui| {
-                ui.label("Send to");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.fields.wol_address).desired_width(140.0),
-                );
-                ui.label("port");
-                ui.add(egui::DragValue::new(&mut d.tv.wol_port).range(1..=65535));
-            });
-            hint(ui, "255.255.255.255 port 9 works on most home networks.");
+        section(ui, "Turning the TV on");
+        ui.horizontal(|ui| {
+            ui.radio_value(&mut d.tv.power_on, PowerOn::Wol, "Wake-on-LAN");
+            ui.radio_value(
+                &mut d.tv.power_on,
+                PowerOn::Broadlink,
+                "Broadlink IR blaster",
+            );
         });
+        if d.tv.power_on == PowerOn::Broadlink {
+            hint(
+                ui,
+                "Replaces Wake-on-LAN: a Broadlink RM4 (Pro or mini) sends the TV remote's \
+                 power button. It toggles, so it is only sent when the TV doesn't answer \
+                 on the network; a TV that answers is woken over ADB instead. Sleep \
+                 always goes over ADB.",
+            );
+            ui.horizontal(|ui| {
+                ui.label("Broadlink IP");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.fields.broadlink_ip).desired_width(140.0),
+                );
+                if ui
+                    .add_enabled(
+                        connected && !testing && !dirty,
+                        egui::Button::new("Send power toggle"),
+                    )
+                    .on_hover_text("Sends the packet once (save first). The TV turns on or off.")
+                    .clicked()
+                {
+                    self.tv_test = None;
+                    self.outbox.push(IpcRequest::TvCommand {
+                        command: TvCommand::IrPower,
+                    });
+                }
+            });
+            ui.label("IR power packet (hex, as learned with python-broadlink)");
+            ui.add(
+                egui::TextEdit::multiline(&mut self.fields.broadlink_packet)
+                    .desired_rows(2)
+                    .desired_width(f32::INFINITY)
+                    .font(egui::TextStyle::Monospace),
+            );
+        } else {
+            ui.checkbox(
+                &mut d.tv.wol_enabled,
+                "Send a Wake-on-LAN packet before waking",
+            );
+            ui.add_enabled_ui(d.tv.wol_enabled, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("TV MAC");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.fields.tv_mac)
+                            .hint_text("AA:BB:CC:DD:EE:FF")
+                            .desired_width(160.0),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Send to");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.fields.wol_address)
+                            .desired_width(140.0),
+                    );
+                    ui.label("port");
+                    ui.add(egui::DragValue::new(&mut d.tv.wol_port).range(1..=65535));
+                });
+                hint(ui, "255.255.255.255 port 9 works on most home networks.");
+            });
+        }
 
         section(ui, "After waking");
         hint(

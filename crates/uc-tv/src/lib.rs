@@ -5,6 +5,7 @@
 //!   `config.tv` (plan §2.6).
 //! - [`adb`]: the native ADB client (no `adb.exe`, no ADB server process).
 //! - [`wol`]: Wake-on-LAN magic packets.
+//! - [`broadlink`]: IR power packet through a Broadlink RM4 (local UDP).
 //! - [`arp`]: the TV's MAC from the neighbour table, captured at pairing.
 //! - [`mdns`]: finding TVs on the network.
 //!
@@ -13,6 +14,7 @@
 
 pub mod adb;
 pub mod arp;
+pub mod broadlink;
 pub mod controller;
 pub mod error;
 pub mod mdns;

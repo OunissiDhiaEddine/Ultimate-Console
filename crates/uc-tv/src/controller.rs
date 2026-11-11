@@ -9,10 +9,10 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use uc_core::config::{Tv as TvConfig, parse_mac};
+use uc_core::config::{PowerOn, Tv as TvConfig, parse_mac};
 
 use crate::adb::{AdbConnection, AdbKey, ConnectOptions};
-use crate::{Result, TvError, arp, wol};
+use crate::{Result, TvError, arp, broadlink, wol};
 
 /// Time allowed for one shell command (`dumpsys` can be slow on a busy TV).
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
@@ -83,6 +83,8 @@ impl std::fmt::Display for TvState {
 pub struct WakeReport {
     /// Magic packets sent (0 if WoL is off or no MAC is known).
     pub wol_packets: u32,
+    /// IR power toggles sent through the Broadlink (0 or 1).
+    pub ir_packets: u32,
     /// ADB connection attempts until one worked.
     pub connect_attempts: u32,
     pub elapsed: Duration,
@@ -107,6 +109,8 @@ pub struct TvController {
     config: TvConfig,
     key: Arc<AdbKey>,
     conn: Option<AdbConnection>,
+    /// Broadlink UDP port (80; tests point it at a fake).
+    ir_port: u16,
 }
 
 impl TvController {
@@ -115,6 +119,7 @@ impl TvController {
             config,
             key,
             conn: None,
+            ir_port: broadlink::PORT,
         }
     }
 
@@ -235,13 +240,19 @@ impl TvController {
     /// keep trying ADB with backoff for up to `wake_retry_secs` (repeating the
     /// magic packet every few seconds), then `KEYCODE_WAKEUP` and the
     /// `after_wake_commands`. Safe to call when the TV is already on.
+    ///
+    /// With `power_on = broadlink` the IR power packet replaces Wake-on-LAN.
+    /// It is a toggle, so it is sent at most once, and only when the TV does
+    /// not answer ADB first: a TV that answers is on or in a network standby
+    /// that `KEYCODE_WAKEUP` handles, and toggling it would turn it off.
     pub fn wake(&mut self) -> Result<WakeReport> {
         let start = Instant::now();
         let deadline = start + Duration::from_secs(self.config.wake_retry_secs as u64);
         let mut report = WakeReport::default();
         self.addr()?;
+        let ir = self.config.power_on == PowerOn::Broadlink;
 
-        let mac = self.wol_mac();
+        let mac = if ir { None } else { self.wol_mac() };
         let (wol_address, wol_port, tv_ip) = (
             self.config.wol_address,
             self.config.wol_port,
@@ -261,8 +272,21 @@ impl TvController {
         // A connection held from before may be stale (TV slept, Wi-Fi dropped).
         self.ping_held(PING_TIMEOUT);
 
+        if ir {
+            report.connect_attempts += 1;
+            match self.connect() {
+                Ok(_) => tracing::debug!("TV answers ADB; no IR toggle needed"),
+                Err(e) if e.is_retryable() => {
+                    tracing::debug!(error = %e, "TV does not answer; sending the IR power toggle");
+                    self.send_ir()?;
+                    report.ir_packets += 1;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
         let mut backoff = BACKOFF_START;
-        loop {
+        while !self.is_connected() {
             report.connect_attempts += 1;
             match self.connect() {
                 Ok(_) => break,
@@ -295,9 +319,16 @@ impl TvController {
             elapsed_ms = report.elapsed.as_millis() as u64,
             attempts = report.connect_attempts,
             wol = report.wol_packets,
+            ir = report.ir_packets,
             "TV woken"
         );
         Ok(report)
+    }
+
+    /// Sends the IR power packet through the Broadlink once, whatever
+    /// `power_on` says (also for testing). It toggles the TV's power.
+    pub fn send_ir(&self) -> Result<()> {
+        broadlink::send_configured(&self.config, self.ir_port)
     }
 
     /// The MAC to use for WoL, if WoL is on and the MAC is set and valid.
@@ -598,6 +629,52 @@ mod tests {
         cfg.adb_port += 1;
         c.set_config(cfg);
         assert!(!c.is_connected());
+    }
+
+    #[test]
+    fn ir_toggle_only_when_tv_does_not_answer() {
+        use crate::broadlink::tests::FakeRm4;
+
+        // TV already answers: no toggle (it would turn the TV off).
+        let rm = FakeRm4::start();
+        let tv = FakeTv::start(Trust::Known, tv_answers);
+        let mut cfg = config_for(tv.addr);
+        cfg.power_on = PowerOn::Broadlink;
+        cfg.broadlink_ip = rm.addr.ip();
+        cfg.mac = Some("AA:BB:CC:DD:EE:FF".into());
+        let mut c = TvController::new(cfg, key());
+        c.ir_port = rm.addr.port();
+        let report = c.wake().unwrap();
+        assert_eq!((report.ir_packets, report.wol_packets), (0, 0));
+        assert!(rm.sent.lock().unwrap().is_empty());
+        assert_eq!(tv.commands(), [CMD_WAKE]);
+
+        // TV off: one toggle, then ADB retries until it is up. Never a second toggle.
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = probe.local_addr().unwrap();
+        drop(probe);
+        let mut cfg = config_for(addr);
+        cfg.power_on = PowerOn::Broadlink;
+        cfg.broadlink_ip = rm.addr.ip();
+        cfg.connect_timeout_ms = 200;
+        let mut c = TvController::new(cfg, key());
+        c.ir_port = rm.addr.port();
+        let starter = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(700));
+            let listener = std::net::TcpListener::bind(addr).unwrap();
+            FakeTv::start_on(listener, Trust::Known, tv_answers)
+        });
+        let report = c.wake().unwrap();
+        assert_eq!(report.ir_packets, 1, "{report:?}");
+        assert!(report.connect_attempts > 1, "{report:?}");
+        assert_eq!(rm.sent.lock().unwrap().len(), 1);
+        c.disconnect();
+        starter.join().unwrap();
+
+        // A Broadlink that doesn't answer fails the wake with a clear error.
+        let quiet = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        c.ir_port = quiet.local_addr().unwrap().port();
+        assert!(matches!(c.send_ir(), Err(TvError::Broadlink(_))));
     }
 
     #[test]

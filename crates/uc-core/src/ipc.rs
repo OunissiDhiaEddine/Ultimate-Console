@@ -103,6 +103,8 @@ pub enum TvCommand {
     Wake,
     Sleep,
     State,
+    /// Send the Broadlink IR power packet once (a toggle), for testing.
+    IrPower,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

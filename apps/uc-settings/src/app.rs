@@ -8,11 +8,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use eframe::egui;
-use uc_core::config::{Hotkeys, parse_mac};
+use uc_core::config::{Hotkeys, parse_hex, parse_mac};
 use uc_core::hotkey::HotkeyCheck;
 use uc_core::ipc::{
     AgentStatus, AudioDeviceInfo, DisplayInfo, HotkeyAction, IpcEvent, IpcRequest, IpcResponse,
-    TvDevice, TvPowerState, UpdateStatus,
+    TvCommand, TvDevice, TvPowerState, UpdateStatus,
 };
 use uc_core::{Config, Hotkey, Mode, Paths};
 
@@ -71,6 +71,8 @@ pub struct Fields {
     pub tv_ip: String,
     pub tv_mac: String,
     pub wol_address: String,
+    pub broadlink_ip: String,
+    pub broadlink_packet: String,
     pub after_wake: String,
     pub steam_exe: String,
     pub launch_args: String,
@@ -82,6 +84,8 @@ impl Fields {
             tv_ip: c.tv.ip.map(|ip| ip.to_string()).unwrap_or_default(),
             tv_mac: c.tv.mac.clone().unwrap_or_default(),
             wol_address: c.tv.wol_address.to_string(),
+            broadlink_ip: c.tv.broadlink_ip.to_string(),
+            broadlink_packet: c.tv.broadlink_packet.clone(),
             after_wake: c.tv.after_wake_commands.join("\n"),
             steam_exe: c
                 .steam
@@ -119,6 +123,16 @@ impl Fields {
         match self.wol_address.trim().parse::<IpAddr>() {
             Ok(a) => c.tv.wol_address = a,
             Err(_) => errors.push("Wake-on-LAN address must be an IP, e.g. 255.255.255.255".into()),
+        }
+        match self.broadlink_ip.trim().parse::<IpAddr>() {
+            Ok(a) => c.tv.broadlink_ip = a,
+            Err(_) => errors.push("Broadlink IP address: not an IP address".into()),
+        }
+        let packet = self.broadlink_packet.trim();
+        if parse_hex(packet).is_some() {
+            c.tv.broadlink_packet = packet.to_string();
+        } else {
+            errors.push("IR power packet: paste the learned packet as hex".into());
         }
         c.tv.after_wake_commands = lines(&self.after_wake);
         let exe = self.steam_exe.trim().trim_matches('"');
@@ -369,6 +383,14 @@ impl App {
             }
             (Q::TvPair { .. }, R::Error { message, .. }) => {
                 self.pair_result = Some(Err(message));
+            }
+            (
+                Q::TvCommand {
+                    command: TvCommand::IrPower,
+                },
+                R::TvPower { .. },
+            ) => {
+                self.tv_test = Some("IR power toggle sent through the Broadlink.".into());
             }
             (Q::TvCommand { command }, R::TvPower { state }) => {
                 self.tv_test = Some(format!("{command:?}: TV is {}", tv_name(state)));
@@ -705,12 +727,15 @@ mod tests {
             tv_ip: "10.0.0.300".into(),
             tv_mac: "nope".into(),
             wol_address: "broadcast".into(),
+            broadlink_ip: "rm4".into(),
+            broadlink_packet: "zz".into(),
             after_wake: "  one \n\n two ".into(),
             steam_exe: "\"C:\\Steam\\steam.exe\"".into(),
             launch_args: String::new(),
         };
         let errors = fields.apply(&mut c);
-        assert_eq!(errors.len(), 3, "{errors:?}");
+        assert_eq!(errors.len(), 5, "{errors:?}");
+        assert_eq!(c.tv.broadlink_packet, Config::default().tv.broadlink_packet);
         assert_eq!(c.tv.ip, Some([10, 0, 0, 2].into()));
         assert_eq!(c.tv.after_wake_commands, ["one", "two"]);
         assert_eq!(c.steam.exe_path, Some(PathBuf::from(r"C:\Steam\steam.exe")));
