@@ -228,6 +228,11 @@ impl Handler {
                 .with(|tv| tv.sleep())
                 .map(|()| uc_tv::TvState::Asleep),
             TvCommand::State => self.tv.with(|tv| tv.state()),
+            // A toggle: the TV's new state is unknown until asked.
+            TvCommand::IrPower => self
+                .tv
+                .with(|tv| tv.send_ir())
+                .map(|()| uc_tv::TvState::Unknown("IR power toggle sent".into())),
         };
         match result {
             Ok(state) => {

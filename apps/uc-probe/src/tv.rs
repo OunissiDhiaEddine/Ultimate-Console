@@ -57,6 +57,12 @@ pub enum TvCmd {
     },
     /// Look up the MAC address of an IP in the ARP table.
     Mac { ip: IpAddr },
+    /// Send the IR power packet (`tv.broadlink_packet`) through the
+    /// Broadlink RM4 at `tv.broadlink_ip` (or `--at`) once. It toggles power.
+    Ir {
+        #[arg(long)]
+        at: Option<IpAddr>,
+    },
 }
 
 pub fn run(args: TvArgs) -> Result<ExitCode, Box<dyn std::error::Error>> {
@@ -97,6 +103,16 @@ pub fn run(args: TvArgs) -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         TvCmd::Mac { ip } => {
             println!("{}", uc_tv::arp::format_mac(uc_tv::arp::mac_for_ip(*ip)?));
+            return Ok(ExitCode::SUCCESS);
+        }
+        TvCmd::Ir { at } => {
+            let mut cfg = tv.clone();
+            if let Some(at) = at {
+                cfg.broadlink_ip = *at;
+            }
+            let ip = cfg.broadlink_ip;
+            uc_tv::broadlink::send_configured(&cfg, uc_tv::broadlink::PORT)?;
+            println!("IR power packet sent through the Broadlink at {ip}");
             return Ok(ExitCode::SUCCESS);
         }
         TvCmd::Wol { mac } => {
@@ -153,10 +169,11 @@ pub fn run(args: TvArgs) -> Result<ExitCode, Box<dyn std::error::Error>> {
         TvCmd::Wake => {
             let r = uc_tv::TvController::new(tv, key).wake()?;
             println!(
-                "awake after {} ms ({} connect attempts, {} WoL packets)",
+                "awake after {} ms ({} connect attempts, {} WoL packets, {} IR toggles)",
                 r.elapsed.as_millis(),
                 r.connect_attempts,
-                r.wol_packets
+                r.wol_packets,
+                r.ir_packets
             );
             for (cmd, err) in &r.after_wake_failures {
                 println!("  after-wake command {cmd:?} failed: {err}");
@@ -185,7 +202,9 @@ pub fn run(args: TvArgs) -> Result<ExitCode, Box<dyn std::error::Error>> {
         TvCmd::Run { cmd } => {
             print!("{}", uc_tv::TvController::new(tv, key).run(&cmd.join(" "))?);
         }
-        TvCmd::Discover { .. } | TvCmd::Mac { .. } | TvCmd::Wol { .. } => unreachable!(),
+        TvCmd::Discover { .. } | TvCmd::Mac { .. } | TvCmd::Wol { .. } | TvCmd::Ir { .. } => {
+            unreachable!()
+        }
     }
     Ok(ExitCode::SUCCESS)
 }

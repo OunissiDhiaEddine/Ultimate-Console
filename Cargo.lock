@@ -25,6 +25,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "aes"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
+dependencies = [
+ "cfg-if",
+ "cipher",
+ "cpufeatures 0.2.17",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -354,6 +365,16 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.3.1",
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "cipher"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
+dependencies = [
+ "crypto-common 0.1.7",
+ "inout",
 ]
 
 [[package]]
@@ -1288,6 +1309,15 @@ checksum = "cc4e190f5d26ca7051642629da2c52fc03bde85a03197c99408dcd291734c855"
 dependencies = [
  "equivalent",
  "hashbrown 0.17.1",
+]
+
+[[package]]
+name = "inout"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
+dependencies = [
+ "generic-array",
 ]
 
 [[package]]
@@ -3080,7 +3110,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "uc-agent"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "serde",
  "serde_json",
@@ -3100,7 +3130,7 @@ dependencies = [
 
 [[package]]
 name = "uc-audio"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "thiserror 2.0.21",
  "tracing",
@@ -3110,7 +3140,7 @@ dependencies = [
 
 [[package]]
 name = "uc-battery"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "tracing",
  "windows 0.62.2",
@@ -3118,7 +3148,7 @@ dependencies = [
 
 [[package]]
 name = "uc-core"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "serde",
  "serde_json",
@@ -3132,7 +3162,7 @@ dependencies = [
 
 [[package]]
 name = "uc-display"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "serde",
  "serde_json",
@@ -3145,7 +3175,7 @@ dependencies = [
 
 [[package]]
 name = "uc-overlay"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "thiserror 2.0.21",
  "tracing",
@@ -3158,7 +3188,7 @@ dependencies = [
 
 [[package]]
 name = "uc-power"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "tracing",
  "uc-core",
@@ -3167,7 +3197,7 @@ dependencies = [
 
 [[package]]
 name = "uc-probe"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "clap",
  "serde_json",
@@ -3188,7 +3218,7 @@ dependencies = [
 
 [[package]]
 name = "uc-settings"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "eframe",
  "tracing",
@@ -3200,7 +3230,7 @@ dependencies = [
 
 [[package]]
 name = "uc-shell"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "thiserror 2.0.21",
  "tracing",
@@ -3210,7 +3240,7 @@ dependencies = [
 
 [[package]]
 name = "uc-sysinfo"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "tracing",
  "windows 0.62.2",
@@ -3218,8 +3248,9 @@ dependencies = [
 
 [[package]]
 name = "uc-tv"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
+ "aes",
  "rsa",
  "sha1 0.10.7",
  "socket2",
@@ -3232,7 +3263,7 @@ dependencies = [
 
 [[package]]
 name = "uc-update"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "tempfile",
  "thiserror 2.0.21",

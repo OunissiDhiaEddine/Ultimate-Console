@@ -189,7 +189,7 @@ impl MockAgent {
                 let state = match command {
                     TvCommand::Wake => TvPowerState::Awake,
                     TvCommand::Sleep => TvPowerState::Asleep,
-                    TvCommand::State => self.state.lock().unwrap().tv,
+                    TvCommand::State | TvCommand::IrPower => self.state.lock().unwrap().tv,
                 };
                 self.set_tv(state);
                 R::TvPower { state }

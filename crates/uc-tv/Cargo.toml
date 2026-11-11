@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 uc-core.workspace = true
+aes.workspace = true
 rsa.workspace = true
 sha1.workspace = true
 socket2.workspace = true

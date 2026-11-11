@@ -174,6 +174,14 @@ pub struct Tv {
     /// Where to send the magic packet. Broadcast by default.
     pub wol_address: IpAddr,
     pub wol_port: u16,
+    /// How the TV is turned on when it doesn't answer on the network.
+    pub power_on: PowerOn,
+    /// Broadlink RM4 (Pro/mini) that sends the IR power packet.
+    pub broadlink_ip: IpAddr,
+    /// The learned IR power packet in Broadlink's format, as hex
+    /// (`packet.hex()` in python-broadlink). It is a toggle: the agent only
+    /// sends it when the TV does not answer ADB, so it never turns a TV off.
+    pub broadlink_packet: String,
     /// Extra `adb shell` commands to run after a wake (vendor-specific).
     pub after_wake_commands: Vec<String>,
     pub connect_timeout_ms: u32,
@@ -191,12 +199,29 @@ impl Default for Tv {
             wol_enabled: true,
             wol_address: IpAddr::from([255, 255, 255, 255]),
             wol_port: 9,
+            power_on: PowerOn::default(),
+            broadlink_ip: IpAddr::from([192, 168, 100, 36]),
+            broadlink_packet: DEFAULT_IR_POWER_PACKET.into(),
             after_wake_commands: Vec::new(),
             connect_timeout_ms: 2000,
             wake_retry_secs: 20,
         }
     }
 }
+
+/// How [`Tv`] gets turned on when it is off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PowerOn {
+    /// Wake-on-LAN magic packet (needs `tv.mac`).
+    #[default]
+    Wol,
+    /// IR power toggle through a Broadlink RM4. Replaces Wake-on-LAN.
+    Broadlink,
+}
+
+/// IR power toggle learned from an IRIS TV remote (Broadlink pulse format).
+pub const DEFAULT_IR_POWER_PACKET: &str = "260046008f911112113612361137111211131112111212121137113512361113111211121212111211131136123512121211121112121137113612121112113711361137113711000d05";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -390,6 +415,10 @@ impl Config {
         if self.tv.wol_port == 0 {
             problems.push("tv.wol_port must be > 0".into());
         }
+        if self.tv.power_on == PowerOn::Broadlink && parse_hex(&self.tv.broadlink_packet).is_none()
+        {
+            problems.push("tv.broadlink_packet must be the learned packet as hex".into());
+        }
         for (name, v) in [
             ("display.wait_timeout_secs", self.display.wait_timeout_secs),
             ("tv.connect_timeout_ms", self.tv.connect_timeout_ms),
@@ -436,9 +465,57 @@ pub fn parse_mac(s: &str) -> Option<[u8; 6]> {
     Some(mac)
 }
 
+/// Parses hex bytes (`"26 00 46"`, `"26:00:46"`, `"0x260046"`). `None` if
+/// empty or not hex.
+pub fn parse_hex(s: &str) -> Option<Vec<u8>> {
+    let s = s.trim();
+    let s = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
+    let digits: Vec<u8> = s
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace() && *b != b':')
+        .collect();
+    if digits.is_empty() || !digits.len().is_multiple_of(2) {
+        return None;
+    }
+    digits
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hex_parsing_and_power_on() {
+        assert_eq!(
+            parse_hex(DEFAULT_IR_POWER_PACKET).map(|p| p.len()),
+            Some(74)
+        );
+        assert_eq!(parse_hex("0x26 00:46"), Some(vec![0x26, 0x00, 0x46]));
+        assert_eq!(parse_hex(""), None);
+        assert_eq!(parse_hex("abc"), None);
+        assert_eq!(parse_hex("zz"), None);
+
+        let c = Config::from_toml("[tv]\npower_on = \"broadlink\"\n", path()).unwrap();
+        assert_eq!(c.tv.power_on, PowerOn::Broadlink);
+        assert_eq!(c.tv.broadlink_ip, IpAddr::from([192, 168, 100, 36]));
+        assert_eq!(Config::default().tv.power_on, PowerOn::Wol);
+
+        let bad = "[tv]\npower_on = \"broadlink\"\nbroadlink_packet = \"nope\"\n";
+        let err = Config::from_toml(bad, path())
+            .unwrap()
+            .validate()
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("broadlink_packet"), "{err}");
+    }
 
     fn path() -> &'static Path {
         Path::new("config.toml")

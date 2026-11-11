@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "apps/*"]
 
 [workspace.package]
-version = "0.1.14"
+version = "0.1.15"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -36,6 +36,8 @@ tempfile = "3"
 rsa = { version = "0.9", features = ["getrandom"] }
 sha1 = { version = "0.10", features = ["oid"] }
 socket2 = "0.6"
+# uc-tv: AES-128 for the Broadlink RM4 local protocol (IR power packet).
+aes = "0.8"
 # uc-update: Velopack installer/updater runtime (hooks, GitHub Releases source).
 # Keep in step with the `vpk` CLI version pinned in release.yml.
 velopack = "=1.3.39-g8d2844f"
