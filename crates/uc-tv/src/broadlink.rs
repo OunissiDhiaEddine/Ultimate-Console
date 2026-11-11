@@ -317,7 +317,15 @@ pub(crate) mod tests {
                 let mac = [1, 2, 3, 4, 5, 6];
                 let mut key = INITIAL_KEY;
                 let mut buf = [0u8; 2048];
-                while let Ok((n, from)) = socket.recv_from(&mut buf) {
+                loop {
+                    let (n, from) = match socket.recv_from(&mut buf) {
+                        Ok(r) => r,
+                        // Windows: the duplicate hello went to a socket the
+                        // client already closed, and the ICMP error shows up
+                        // here. A real RM4 just carries on, and so does this.
+                        Err(e) if e.kind() == io::ErrorKind::ConnectionReset => continue,
+                        Err(_) => break,
+                    };
                     let req = &buf[..n];
                     let mut resp;
                     if n == 0x30 {
