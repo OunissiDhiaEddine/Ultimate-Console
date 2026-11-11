@@ -77,8 +77,8 @@ fn decrypt(key: &[u8; 16], data: &[u8]) -> Vec<u8> {
 
 /// An authenticated session with one RM4.
 pub struct Broadlink {
-    socket: UdpSocket,
     addr: SocketAddr,
+    timeout: Duration,
     devtype: u16,
     /// As the device sends it (reversed); goes into the header as-is.
     mac: [u8; 6],
@@ -90,11 +90,9 @@ pub struct Broadlink {
 impl Broadlink {
     /// Says hello to the device at `addr` and authenticates.
     pub fn connect(addr: SocketAddr, timeout: Duration) -> Result<Self> {
-        let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
-        socket.set_read_timeout(Some(timeout.max(Duration::from_millis(50))))?;
         let mut device = Self {
-            socket,
             addr,
+            timeout: timeout.max(Duration::from_millis(50)),
             devtype: 0,
             mac: [0; 6],
             id: 0,
@@ -113,7 +111,7 @@ impl Broadlink {
         payload.extend_from_slice(&((data.len() + 4) as u16).to_le_bytes());
         payload.extend_from_slice(&CMD_SEND_DATA.to_le_bytes());
         payload.extend_from_slice(data);
-        self.request(TYPE_COMMAND, &payload, 1)?;
+        self.request("sending the IR packet", TYPE_COMMAND, &payload, 1)?;
         Ok(())
     }
 
@@ -137,7 +135,7 @@ impl Broadlink {
         payload[0x1E] = 0x01;
         payload[0x2D] = 0x01;
         payload[0x30..0x36].copy_from_slice(b"Test 1");
-        let reply = self.request(TYPE_AUTH, &payload, TRIES)?;
+        let reply = self.request("login", TYPE_AUTH, &payload, TRIES)?;
         if reply.len() < 0x14 {
             return Err(TvError::Broadlink("short auth reply".into()));
         }
@@ -147,19 +145,19 @@ impl Broadlink {
     }
 
     /// Sends one encrypted frame and returns the decrypted reply payload.
-    fn request(&mut self, kind: u16, payload: &[u8], tries: u32) -> Result<Vec<u8>> {
+    fn request(&mut self, what: &str, kind: u16, payload: &[u8], tries: u32) -> Result<Vec<u8>> {
         self.count = (self.count.wrapping_add(1)) | 0x8000;
         let frame = self.frame(kind, payload);
         let resp = self.exchange(&frame, tries, true, |r| r.len() >= HEADER)?;
         let code = i16::from_le_bytes([resp[0x22], resp[0x23]]);
         if code != 0 {
-            return Err(TvError::Broadlink(match code {
-                -7 => {
-                    "the device rejected the session (auth failed); is it locked in the app?".into()
-                }
-                -5 | -4 => format!("the device did not accept the packet (code {code})"),
+            let reason: String = match code {
+                -1 => "the device refused the session (error -1, authentication failed)".into(),
+                -7 => "the device's session key expired (error -7)".into(),
+                -4 => "the device does not support this command (error -4)".into(),
                 _ => format!("the device answered with error {code}"),
-            }));
+            };
+            return Err(TvError::Broadlink(format!("{what}: {reason}")));
         }
         Ok(decrypt(&self.key, &resp[HEADER..]))
     }
@@ -181,6 +179,11 @@ impl Broadlink {
 
     /// Sends `frame` and waits for a reply from the device that passes `ok`
     /// (and its checksum, if `check`), resending up to `tries` times on timeout.
+    ///
+    /// Each exchange uses its own socket, like python-broadlink: an RM4 can
+    /// answer a hello twice, and on a shared socket the late duplicate was
+    /// taken for the auth reply, so the session id and key were garbage and
+    /// the device refused the IR packet with -1 ("authentication failed").
     fn exchange(
         &self,
         frame: &[u8],
@@ -188,11 +191,13 @@ impl Broadlink {
         check: bool,
         ok: impl Fn(&[u8]) -> bool,
     ) -> Result<Vec<u8>> {
+        let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
+        socket.set_read_timeout(Some(self.timeout))?;
         let mut buf = [0u8; 2048];
         for attempt in 1..=tries.max(1) {
-            self.socket.send_to(frame, self.addr)?;
+            socket.send_to(frame, self.addr)?;
             loop {
-                match self.socket.recv_from(&mut buf) {
+                match socket.recv_from(&mut buf) {
                     Ok((n, from)) if from.ip() == self.addr.ip() => {
                         let resp = &buf[..n];
                         if ok(resp) && (!check || valid_checksum(resp)) {
@@ -362,6 +367,12 @@ pub(crate) mod tests {
                     let sum = checksum(&resp);
                     resp[0x20..0x22].copy_from_slice(&sum.to_le_bytes());
                     socket.send_to(&resp, from).unwrap();
+                    // Real RM4s can answer one hello more than once (that
+                    // is why python-broadlink's scan drops duplicates).
+                    if n == 0x30 {
+                        std::thread::sleep(Duration::from_millis(20));
+                        socket.send_to(&resp, from).unwrap();
+                    }
                 }
             });
             Self { addr, sent }
