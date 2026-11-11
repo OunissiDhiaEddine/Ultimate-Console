@@ -3110,7 +3110,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "uc-agent"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "serde",
  "serde_json",
@@ -3130,7 +3130,7 @@ dependencies = [
 
 [[package]]
 name = "uc-audio"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "thiserror 2.0.21",
  "tracing",
@@ -3140,7 +3140,7 @@ dependencies = [
 
 [[package]]
 name = "uc-battery"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "tracing",
  "windows 0.62.2",
@@ -3148,7 +3148,7 @@ dependencies = [
 
 [[package]]
 name = "uc-core"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "serde",
  "serde_json",
@@ -3162,7 +3162,7 @@ dependencies = [
 
 [[package]]
 name = "uc-display"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "serde",
  "serde_json",
@@ -3175,7 +3175,7 @@ dependencies = [
 
 [[package]]
 name = "uc-overlay"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "thiserror 2.0.21",
  "tracing",
@@ -3188,7 +3188,7 @@ dependencies = [
 
 [[package]]
 name = "uc-power"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "tracing",
  "uc-core",
@@ -3197,7 +3197,7 @@ dependencies = [
 
 [[package]]
 name = "uc-probe"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "clap",
  "serde_json",
@@ -3218,7 +3218,7 @@ dependencies = [
 
 [[package]]
 name = "uc-settings"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "eframe",
  "tracing",
@@ -3230,7 +3230,7 @@ dependencies = [
 
 [[package]]
 name = "uc-shell"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "thiserror 2.0.21",
  "tracing",
@@ -3240,7 +3240,7 @@ dependencies = [
 
 [[package]]
 name = "uc-sysinfo"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "tracing",
  "windows 0.62.2",
@@ -3248,7 +3248,7 @@ dependencies = [
 
 [[package]]
 name = "uc-tv"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "aes",
  "rsa",
@@ -3263,7 +3263,7 @@ dependencies = [
 
 [[package]]
 name = "uc-update"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "tempfile",
  "thiserror 2.0.21",
