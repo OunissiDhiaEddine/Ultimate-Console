@@ -25,10 +25,11 @@ use windows::Win32::Graphics::DirectComposition::{
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
     DWRITE_FONT_WEIGHT, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
-    DWRITE_MEASURING_MODE_NATURAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT,
-    DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_ALIGNMENT_TRAILING,
-    DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_NO_WRAP,
-    DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat,
+    DWRITE_FONT_WEIGHT_SEMI_LIGHT, DWRITE_MEASURING_MODE_NATURAL,
+    DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT, DWRITE_TEXT_ALIGNMENT_CENTER,
+    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_ALIGNMENT_TRAILING, DWRITE_TRIMMING,
+    DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_NO_WRAP, DWriteCreateFactory,
+    IDWriteFactory, IDWriteTextFormat,
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_ALPHA_MODE_PREMULTIPLIED, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
@@ -41,7 +42,7 @@ use windows::Win32::Graphics::Dxgi::{
 use windows::core::{Interface, PCWSTR, Result, w};
 
 use crate::layout::{Layout, ROW_H, Rect};
-use crate::model::{Confirm, Model, Tab, VolumeRow};
+use crate::model::{Confirm, Focus, Model, Tab, VolumeRow};
 use crate::osd;
 use uc_battery::Kind;
 
@@ -57,9 +58,15 @@ const fn hex(rgb: u32, a: f32) -> Rgba {
     )
 }
 
-const BACKDROP: Rgba = hex(0x000000, 0.55);
-const CARD: Rgba = hex(0x151922, 0.97);
+const BACKDROP: Rgba = hex(0x04060A, 0.58);
+const SHADOW: Rgba = hex(0x000000, 0.14);
+const CARD: Rgba = hex(0x141821, 0.97);
 const CARD_EDGE: Rgba = hex(0xFFFFFF, 0.08);
+/// Laid over the card under the side menu.
+const SIDEBAR: Rgba = hex(0x07090E, 0.5);
+const ACCENT_SOFT: Rgba = hex(0x4C9AFF, 0.18);
+/// Selection in a panel while the menu has the focus.
+const IDLE_SELECTED: Rgba = hex(0xFFFFFF, 0.05);
 const TILE: Rgba = hex(0x1E2330, 1.0);
 const TILE_SELECTED: Rgba = hex(0x283044, 1.0);
 const THUMB_BG: Rgba = hex(0x0D1016, 1.0);
@@ -71,6 +78,9 @@ const MUTED: Rgba = hex(0x6B7385, 1.0);
 const DANGER: Rgba = hex(0xFF6B6B, 1.0);
 
 struct Fonts {
+    clock: IDWriteTextFormat,
+    menu: IDWriteTextFormat,
+    menu_icon: IDWriteTextFormat,
     big: IDWriteTextFormat,
     tab: IDWriteTextFormat,
     tab_right: IDWriteTextFormat,
@@ -125,6 +135,9 @@ impl Fonts {
             DWRITE_TEXT_ALIGNMENT_CENTER,
         );
         Ok(Self {
+            clock: make(36.0, DWRITE_FONT_WEIGHT_SEMI_LIGHT, l)?,
+            menu: make(18.0, sb, l)?,
+            menu_icon: make_in(w!("Segoe MDL2 Assets"), 18.0, n, c)?,
             big: make(30.0, sb, l)?,
             tab: make(21.0, sb, l)?,
             tab_right: make(21.0, sb, r)?,
@@ -376,23 +389,23 @@ impl Gfx {
 
     fn scene(&self, model: &Model, l: &Layout) {
         let f = &self.fonts;
+        let radius = 20.0;
         self.fill(l.screen, 0.0, BACKDROP);
-        self.fill(l.card, 18.0, CARD);
-        self.stroke(l.card, 18.0, CARD_EDGE, 1.0);
-
-        for (i, tab) in Tab::ALL.iter().enumerate() {
-            let r = l.tab(i);
-            let active = *tab == model.tab;
-            let label = Rect::new(r.x + 12.0, r.y, r.w - 12.0, r.h - 8.0);
-            self.text(tab.title(), &f.tab, label, if active { TEXT } else { DIM });
-            if active {
-                self.fill(
-                    Rect::new(r.x + 12.0, r.bottom() - 8.0, 44.0, 3.0),
-                    1.5,
-                    ACCENT,
-                );
-            }
+        // Soft shadow: a few wider, fainter layers under the card.
+        for d in [16.0, 9.0, 4.0] {
+            let r = Rect::new(
+                l.card.x - d,
+                l.card.y - d + 6.0,
+                l.card.w + 2.0 * d,
+                l.card.h + 2.0 * d,
+            );
+            self.fill(r, radius + d, SHADOW);
         }
+        self.fill(l.card, radius, CARD);
+        self.sidebar(model, l);
+        self.stroke(l.card, radius, CARD_EDGE, 1.0);
+
+        self.text(model.tab.title(), &f.big, l.header, TEXT);
         let header_info = match model.tab {
             Tab::Tasks if !model.tasks.is_empty() => {
                 format!("{} / {}", model.selected + 1, model.tasks.len())
@@ -419,6 +432,82 @@ impl Gfx {
         }
     }
 
+    /// The vertical tab menu: clock, panels, system stats.
+    fn sidebar(&self, model: &Model, l: &Layout) {
+        let f = &self.fonts;
+        let s = l.sidebar;
+        // Rounded on the card's corners only.
+        self.fill(s, 20.0, SIDEBAR);
+        self.fill(Rect::new(s.right() - 20.0, s.y, 20.0, s.h), 0.0, SIDEBAR);
+        self.fill(Rect::new(s.right(), s.y, 1.0, s.h), 0.0, CARD_EDGE);
+
+        self.text(&model.clock, &f.clock, l.clock, TEXT);
+
+        let menu_focus = model.focus == Focus::Menu && model.confirm.is_none();
+        for (i, tab) in Tab::ALL.iter().enumerate() {
+            let r = l.tab(i);
+            let active = *tab == model.tab;
+            if active {
+                if menu_focus {
+                    self.fill(r, 12.0, ACCENT_SOFT);
+                    self.fill(Rect::new(r.x, r.y + 14.0, 3.0, r.h - 28.0), 1.5, ACCENT);
+                } else {
+                    self.fill(r, 12.0, IDLE_SELECTED);
+                }
+            }
+            let (icon, label) = match (active, menu_focus) {
+                (true, true) => (ACCENT, TEXT),
+                (true, false) => (TEXT, TEXT),
+                _ => (DIM, DIM),
+            };
+            self.text(
+                tab.glyph(),
+                &f.menu_icon,
+                Rect::new(r.x + 12.0, r.y, 28.0, r.h),
+                icon,
+            );
+            self.text(
+                tab.title(),
+                &f.menu,
+                Rect::new(r.x + 50.0, r.y, (r.w - 58.0).max(0.0), r.h),
+                label,
+            );
+        }
+
+        let sys = &model.stats.system;
+        if sys.memory_total_bytes > 0 {
+            let pct = |v: Option<f32>| v.map_or_else(|| "--".to_owned(), |v| format!("{v:.0}%"));
+            let lines = [
+                ("CPU", pct(sys.cpu_percent)),
+                ("GPU", pct(sys.gpu_percent)),
+                (
+                    "RAM",
+                    format!(
+                        "{} / {}",
+                        uc_sysinfo::format_bytes(sys.memory_used_bytes),
+                        uc_sysinfo::format_bytes(sys.memory_total_bytes)
+                    ),
+                ),
+            ];
+            for (i, (k, v)) in lines.iter().enumerate() {
+                let r = l.sys_line(i);
+                self.text(k, &f.small, r, MUTED);
+                self.text(v, &f.small_right, r, DIM);
+            }
+        }
+    }
+
+    /// Background of the selected row: full accent while the panel has the
+    /// focus, a faint marker while the menu has it.
+    fn row_highlight(&self, model: &Model, r: Rect) {
+        if model.focus == Focus::Panel {
+            self.fill(r, 10.0, TILE_SELECTED);
+            self.fill(Rect::new(r.x, r.y + 12.0, 4.0, r.h - 24.0), 2.0, ACCENT);
+        } else {
+            self.fill(r, 10.0, IDLE_SELECTED);
+        }
+    }
+
     fn tasks(&self, model: &Model, l: &Layout) {
         let f = &self.fonts;
         if model.tasks.is_empty() {
@@ -428,6 +517,7 @@ impl Gfx {
         for t in l.tiles(model.tasks.len(), model.scroll_row) {
             let task = &model.tasks[t.index];
             let selected = t.index == model.selected;
+            let focused = selected && model.focus == Focus::Panel;
             self.fill(t.outer, 12.0, if selected { TILE_SELECTED } else { TILE });
             self.fill(t.thumb, 8.0, THUMB_BG);
             // Shown only if DWM has no thumbnail to draw over it.
@@ -443,7 +533,7 @@ impl Gfx {
                 t.label,
                 if selected { TEXT } else { DIM },
             );
-            if selected {
+            if focused {
                 self.stroke(t.outer.inset(1.5), 11.0, ACCENT, 3.0);
             }
         }
@@ -476,8 +566,7 @@ impl Gfx {
             let y = l.body.y + (i - first) as f32 * ROW_H;
             let r = Rect::new(l.body.x, y, l.body.w, ROW_H - 8.0);
             if i == model.volume_row {
-                self.fill(r, 10.0, TILE_SELECTED);
-                self.fill(Rect::new(r.x, r.y + 12.0, 4.0, r.h - 24.0), 2.0, ACCENT);
+                self.row_highlight(model, r);
             }
             let name = match row {
                 VolumeRow::Master(_) => "Master volume".to_owned(),
@@ -543,8 +632,7 @@ impl Gfx {
             let y = l.body.y + (i - first) as f32 * ROW_H;
             let r = Rect::new(l.body.x, y, l.body.w, ROW_H - 8.0);
             if i == model.output_row {
-                self.fill(r, 10.0, TILE_SELECTED);
-                self.fill(Rect::new(r.x, r.y + 12.0, 4.0, r.h - 24.0), 2.0, ACCENT);
+                self.row_highlight(model, r);
             }
             let tag_w = 160.0;
             // Segoe MDL2 Assets: CheckMark next to the device in use.
@@ -591,8 +679,7 @@ impl Gfx {
             let y = l.body.y + (i - first) as f32 * ROW_H;
             let r = Rect::new(l.body.x, y, l.body.w, ROW_H - 8.0);
             if i == model.battery_row {
-                self.fill(r, 10.0, TILE_SELECTED);
-                self.fill(Rect::new(r.x, r.y + 12.0, 4.0, r.h - 24.0), 2.0, ACCENT);
+                self.row_highlight(model, r);
             }
             // Segoe MDL2 Assets: Game, Headphone, Mouse, Keyboard, Devices.
             let glyph = match d.kind {
@@ -741,39 +828,27 @@ impl Gfx {
         let f = &self.fonts;
         let r = l.footer;
         self.fill(Rect::new(r.x, r.y, r.w, 1.0), 0.0, CARD_EDGE);
-        let s = &model.stats.system;
-        let pct = |v: Option<f32>| v.map_or_else(|| "--".to_owned(), |v| format!("{v:.0}%"));
-        let system = if s.memory_total_bytes > 0 {
-            format!(
-                "CPU {}    GPU {}    RAM {} / {}",
-                pct(s.cpu_percent),
-                pct(s.gpu_percent),
-                uc_sysinfo::format_bytes(s.memory_used_bytes),
-                uc_sysinfo::format_bytes(s.memory_total_bytes),
-            )
-        } else {
-            String::new()
-        };
-        let half = r.w / 2.0;
-        self.text(&system, &f.small, Rect::new(r.x, r.y + 1.0, half, r.h), DIM);
-        let hints = match model.tab {
-            Tab::Tasks => "A Switch   X Close   Y End task   LB/RB Panels   B Back",
-            Tab::Volume => "◀ ▶ Adjust   A Mute   LT/RT Master   LB/RB Panels   B Back",
-            Tab::Output => "▲ ▼ Choose   A Use this device   LB/RB Panels   B Back",
-            Tab::Info => "◀ ▶ Task   A Switch   LB/RB Panels   B Back",
-            Tab::Battery => "▲ ▼ Choose   A Refresh   LB/RB Panels   B Back",
+        let hints = match (model.focus, model.tab) {
+            (Focus::Menu, _) => "▲ ▼ Choose   ▶ / A Open   LT/RT Volume   B Close",
+            (Focus::Panel, Tab::Tasks) => "A Switch   X Close   Y End task   LB/RB Panels   B Menu",
+            (Focus::Panel, Tab::Volume) => {
+                "◀ ▶ Adjust   A Mute   LT/RT Master   LB/RB Panels   B Menu"
+            }
+            (Focus::Panel, Tab::Output) => "▲ ▼ Choose   A Use this device   LB/RB Panels   B Menu",
+            (Focus::Panel, Tab::Info) => "▲ ▼ Task   A Switch   LB/RB Panels   B Menu",
+            (Focus::Panel, Tab::Battery) => "▲ ▼ Choose   A Refresh   LB/RB Panels   B Menu",
         };
         self.text(
             hints,
             &f.small_right,
-            Rect::new(r.x + half, r.y + 1.0, half, r.h),
+            Rect::new(r.x, r.y + 1.0, r.w, r.h),
             DIM,
         );
     }
 
     fn confirm(&self, c: &Confirm, l: &Layout) {
         let f = &self.fonts;
-        self.fill(l.card, 18.0, hex(0x000000, 0.6));
+        self.fill(l.card, 20.0, hex(0x000000, 0.6));
         let (w, h) = (560.0_f32.min(l.card.w - 40.0), 220.0);
         let r = Rect::new(
             l.card.x + (l.card.w - w) / 2.0,

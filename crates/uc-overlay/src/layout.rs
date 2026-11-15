@@ -58,11 +58,18 @@ impl Rect {
     }
 }
 
-const MAX_CARD_W: f32 = 1120.0;
-const MAX_CARD_H: f32 = 700.0;
+const MAX_CARD_W: f32 = 1240.0;
+const MAX_CARD_H: f32 = 720.0;
 const PAD: f32 = 28.0;
-const HEADER_H: f32 = 64.0;
-const FOOTER_H: f32 = 56.0;
+const HEADER_H: f32 = 60.0;
+const FOOTER_H: f32 = 48.0;
+const MAX_SIDEBAR_W: f32 = 232.0;
+/// Clock at the top of the side menu.
+const CLOCK_H: f32 = 76.0;
+const TAB_H: f32 = 52.0;
+const TAB_GAP: f32 = 6.0;
+/// CPU / GPU / RAM lines at the bottom of the side menu.
+const SYS_LINE_H: f32 = 24.0;
 const GAP: f32 = 18.0;
 const LABEL_H: f32 = 30.0;
 pub const ROW_H: f32 = 64.0;
@@ -89,6 +96,12 @@ pub enum Hit {
 pub struct Layout {
     pub screen: Rect,
     pub card: Rect,
+    /// The vertical tab menu down the left side of the card.
+    pub sidebar: Rect,
+    pub clock: Rect,
+    /// System CPU/GPU/RAM, one [`Layout::sys_line`] each.
+    pub sys: Rect,
+    /// Panel title row, right of the menu.
     pub header: Rect,
     pub body: Rect,
     pub footer: Rect,
@@ -104,7 +117,17 @@ impl Layout {
         let cw = MAX_CARD_W.min(w * 0.86);
         let ch = MAX_CARD_H.min(h * 0.86);
         let card = Rect::new((w - cw) / 2.0, (h - ch) / 2.0, cw, ch);
-        let inner = card.inset(PAD);
+        let sidebar = Rect::new(card.x, card.y, MAX_SIDEBAR_W.min(cw * 0.24), ch);
+        let menu = sidebar.inset(14.0);
+        let clock = Rect::new(menu.x + 10.0, menu.y, menu.w - 20.0, CLOCK_H - 14.0);
+        let sys_h = 3.0 * SYS_LINE_H;
+        let sys = Rect::new(clock.x, menu.bottom() - sys_h, clock.w, sys_h);
+        let inner = Rect::new(
+            sidebar.right() + PAD,
+            card.y + PAD,
+            (card.right() - sidebar.right() - 2.0 * PAD).max(0.0),
+            (ch - 2.0 * PAD).max(0.0),
+        );
         let header = Rect::new(inner.x, inner.y, inner.w, HEADER_H);
         let footer = Rect::new(inner.x, inner.bottom() - FOOTER_H, inner.w, FOOTER_H);
         let body = Rect::new(
@@ -125,6 +148,9 @@ impl Layout {
         Self {
             screen,
             card,
+            sidebar,
+            clock,
+            sys,
             header,
             body,
             footer,
@@ -134,14 +160,24 @@ impl Layout {
         }
     }
 
+    /// Row `i` of the side menu.
     pub fn tab(&self, i: usize) -> Rect {
-        // Tabs share the header on a narrow card.
-        let w = (self.header.w * 0.8 / Tab::ALL.len() as f32).min(150.0);
+        let x = self.sidebar.x + 14.0;
         Rect::new(
-            self.header.x + i as f32 * w,
-            self.header.y,
-            w,
-            self.header.h,
+            x,
+            self.sidebar.y + 14.0 + CLOCK_H + i as f32 * (TAB_H + TAB_GAP),
+            self.sidebar.w - 28.0,
+            TAB_H,
+        )
+    }
+
+    /// Line `i` (0–2) of the system stats under the menu.
+    pub fn sys_line(&self, i: usize) -> Rect {
+        Rect::new(
+            self.sys.x,
+            self.sys.y + i as f32 * SYS_LINE_H,
+            self.sys.w,
+            SYS_LINE_H,
         )
     }
 
@@ -218,6 +254,20 @@ mod tests {
         let small = Layout::new(800.0, 600.0);
         assert!(small.card.w < 800.0 && small.card.right() < 800.0);
         assert!(small.columns < l.columns);
+    }
+
+    #[test]
+    fn side_menu_fits_and_leaves_room() {
+        for (w, h) in [(1920.0, 1080.0), (1280.0, 720.0), (800.0, 600.0)] {
+            let l = Layout::new(w, h);
+            let last = l.tab(Tab::ALL.len() - 1);
+            assert!(last.bottom() <= l.sys.y, "{w}x{h}: tabs run into the stats");
+            assert!(l.tab(0).y >= l.clock.bottom());
+            assert!(l.body.x > l.sidebar.right() && l.body.right() <= l.card.right());
+            assert!(l.sidebar.right() <= l.card.right());
+        }
+        // Four task columns on a 1080p screen, like before the side menu.
+        assert_eq!(Layout::new(1920.0, 1080.0).columns, 4);
     }
 
     #[test]
