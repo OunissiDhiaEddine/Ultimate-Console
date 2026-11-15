@@ -306,3 +306,27 @@ pub fn exclusive_fullscreen() -> bool {
         Ok(QUNS_RUNNING_D3D_FULL_SCREEN)
     )
 }
+
+/// The local time as the user's Windows settings format it, without seconds
+/// ("21:47" or "9:47 PM").
+pub fn clock_text() -> String {
+    use windows::Win32::Globalization::{GetTimeFormatEx, TIME_NOSECONDS};
+    let mut buf = [0u16; 32];
+    // SAFETY: `buf` is a valid output buffer for the duration of the call;
+    // null locale, time and format mean the user's locale, now, default format.
+    let n = unsafe {
+        GetTimeFormatEx(
+            PCWSTR::null(),
+            TIME_NOSECONDS,
+            None,
+            PCWSTR::null(),
+            Some(&mut buf),
+        )
+    };
+    // `n` counts the terminating null.
+    let len = usize::try_from(n)
+        .unwrap_or(0)
+        .saturating_sub(1)
+        .min(buf.len());
+    String::from_utf16_lossy(&buf[..len])
+}

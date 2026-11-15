@@ -11,7 +11,9 @@
 //! opens and dropped when it closes, and no timers run.
 //!
 //! When open it covers the monitor the foreground window is on with a dimmed
-//! backdrop and a centred card with four panels (it opens on the first):
+//! backdrop and a centred card: a vertical menu down the left side (clock,
+//! panels, system CPU/GPU/RAM) and the chosen panel next to it. It opens on
+//! the first panel with the menu focused:
 //!
 //! 1. **Volume**: master volume and mute, then per-app volume with the
 //!    selected task's app first.
@@ -34,8 +36,11 @@
 //! couple of seconds when [`Overlay::volume_key`] is called (volume keys in
 //! gaming mode, where Explorer doesn't handle them).
 //!
-//! Navigation: arrows / D-pad / left stick, Tab / LB / RB between panels,
-//! Esc / B closes, `+` `-` / triggers change the master volume, M mutes.
+//! Navigation: in the menu, Up/Down pick a panel (shown right away) and
+//! Right / A go into it; inside a panel the arrows / D-pad / left stick move
+//! as before, and B (or Left at the panel's left edge) goes back to the
+//! menu. B in the menu closes. Tab / LB / RB switch panels from anywhere,
+//! `+` `-` / triggers change the master volume, M mutes.
 //!
 //! Policy (only in gaming mode unless `overlay.in_desktop_mode`) and the
 //! hotkey belong to the agent, not here.

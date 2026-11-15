@@ -35,8 +35,8 @@ pub struct PadState {
 
 const STICK_THRESHOLD: i32 = 16_000;
 const TRIGGER_THRESHOLD: u8 = 100;
-const REPEAT_DELAY: Duration = Duration::from_millis(400);
-const REPEAT_EVERY: Duration = Duration::from_millis(110);
+const REPEAT_DELAY: Duration = Duration::from_millis(300);
+const REPEAT_EVERY: Duration = Duration::from_millis(80);
 
 // Logical inputs, after merging D-pad with stick and triggers with buttons.
 const UP: u32 = 1 << 0;
@@ -196,14 +196,14 @@ mod tests {
         g.prime(&[]);
         let right = [pad(buttons::DPAD_RIGHT)];
         assert_eq!(g.update(&right, t), vec![Action::Right]);
-        assert!(g.update(&right, t + Duration::from_millis(300)).is_empty());
+        assert!(g.update(&right, t + Duration::from_millis(250)).is_empty());
         assert_eq!(
-            g.update(&right, t + Duration::from_millis(400)),
+            g.update(&right, t + Duration::from_millis(300)),
             vec![Action::Right]
         );
-        assert!(g.update(&right, t + Duration::from_millis(450)).is_empty());
+        assert!(g.update(&right, t + Duration::from_millis(350)).is_empty());
         assert_eq!(
-            g.update(&right, t + Duration::from_millis(510)),
+            g.update(&right, t + Duration::from_millis(380)),
             vec![Action::Right]
         );
     }

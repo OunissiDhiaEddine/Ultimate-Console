@@ -2,8 +2,8 @@
 
 use std::time::{Duration, Instant};
 
-pub const FADE_IN: Duration = Duration::from_millis(140);
-pub const FADE_OUT: Duration = Duration::from_millis(110);
+pub const FADE_IN: Duration = Duration::from_millis(120);
+pub const FADE_OUT: Duration = Duration::from_millis(90);
 
 /// Opacity moving from one value to another over a fixed time, eased out.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -45,7 +45,9 @@ impl Fade {
     /// Opacity at `now`, 0–1.
     pub fn value(&self, now: Instant) -> f32 {
         let t = self.progress(now);
-        let eased = 1.0 - (1.0 - t) * (1.0 - t);
+        // Cubic ease-out: most of the change lands in the first frames, so
+        // it reads as instant without popping.
+        let eased = 1.0 - (1.0 - t).powi(3);
         self.from + (self.to - self.from) * eased
     }
 

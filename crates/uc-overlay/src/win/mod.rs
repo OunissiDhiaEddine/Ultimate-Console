@@ -56,10 +56,17 @@ const WM_APP_VOLUME_KEY: u32 = WM_APP + 6;
 const WM_APP_KEY: u32 = WM_APP + 7;
 /// The battery monitor finished a scan.
 const WM_APP_BATTERY: u32 = WM_APP + 8;
+/// Read what the first frame didn't need (output devices, stats), once the
+/// overlay is on screen.
+const WM_APP_FILL: u32 = WM_APP + 9;
 
 const TIMER_FRAME: usize = 1;
 const TIMER_SAMPLE: usize = 2;
 const TIMER_REFRESH: usize = 3;
+/// Starts the battery monitor once the Battery panel has stayed open a
+/// moment, so scrolling past it in the menu doesn't start a scan.
+const TIMER_BATTERY: usize = 4;
+const BATTERY_SETTLE_MS: u32 = 250;
 const FRAME_MS: u32 = 16;
 /// Delay before re-listing windows after a close/kill, so the window is gone.
 const REFRESH_MS: u32 = 400;
@@ -387,6 +394,16 @@ impl State {
                         o.on_timer(wp.0);
                     }
                 }
+                TIMER_BATTERY => {
+                    // SAFETY: killing our own one-shot timer.
+                    let _ = unsafe { KillTimer(Some(self.hwnd), TIMER_BATTERY) };
+                    if self.phase == Phase::Shown
+                        && self.model.tab == Tab::Battery
+                        && self.battery.is_none()
+                    {
+                        self.start_battery();
+                    }
+                }
                 TIMER_REFRESH => {
                     // SAFETY: killing our own one-shot timer.
                     let _ = unsafe { KillTimer(Some(self.hwnd), TIMER_REFRESH) };
@@ -401,6 +418,12 @@ impl State {
             WM_APP_KEY => {
                 if let Some(action) = key_action(VIRTUAL_KEY(wp.0 as u16)) {
                     self.act(action);
+                }
+            }
+            WM_APP_FILL => {
+                if self.phase != Phase::Hidden {
+                    self.refresh_outputs();
+                    self.refresh_stats();
                 }
             }
             WM_APP_BATTERY => {
@@ -519,10 +542,11 @@ impl State {
         self.model.reset();
         // Start from an empty list so the cursor lands on the default device.
         self.model.set_outputs(Outputs::default());
+        self.model.clock = system::clock_text();
+        // Only what the first panel shows is read before the first frame;
+        // the rest follows right after it is on screen.
         self.refresh_tasks();
         self.refresh_volume();
-        self.refresh_outputs();
-        self.refresh_stats();
 
         // Exclusive-fullscreen games minimise when they lose the foreground,
         // so over one the overlay leaves focus alone and hooks the keyboard.
@@ -555,6 +579,8 @@ impl State {
                 );
             }
         }
+        // SAFETY: posting to our own window.
+        let _ = unsafe { PostMessageW(Some(self.hwnd), WM_APP_FILL, WPARAM(0), LPARAM(0)) };
         self.gamepad.prime(&self.pads.poll());
         // SAFETY: timers on our own window.
         unsafe { SetTimer(Some(self.hwnd), TIMER_FRAME, FRAME_MS, None) };
@@ -620,7 +646,7 @@ impl State {
         // SAFETY: our own window and timers.
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_HIDE);
-            for t in [TIMER_FRAME, TIMER_SAMPLE, TIMER_REFRESH] {
+            for t in [TIMER_FRAME, TIMER_SAMPLE, TIMER_REFRESH, TIMER_BATTERY] {
                 let _ = KillTimer(Some(self.hwnd), t);
             }
         }
@@ -732,6 +758,7 @@ impl State {
         self.refresh_outputs();
         self.refresh_stats();
         self.model.display = system::display_mode(self.hwnd);
+        self.model.clock = system::clock_text();
     }
 
     fn refresh_tasks(&mut self) {
@@ -819,7 +846,8 @@ impl State {
         if !wanted {
             self.battery = None;
         } else if self.battery.is_none() {
-            self.start_battery();
+            // SAFETY: (re)arming a one-shot timer on our own window.
+            unsafe { SetTimer(Some(self.hwnd), TIMER_BATTERY, BATTERY_SETTLE_MS, None) };
         }
     }
 

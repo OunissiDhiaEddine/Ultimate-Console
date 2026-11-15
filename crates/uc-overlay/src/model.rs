@@ -43,7 +43,18 @@ impl Tab {
         }
     }
 
-    fn index(self) -> usize {
+    /// Segoe MDL2 Assets glyph shown next to the title in the side menu.
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Tab::Volume => "\u{E767}",
+            Tab::Tasks => "\u{E7C4}",
+            Tab::Output => "\u{E7F5}",
+            Tab::Info => "\u{E9D9}",
+            Tab::Battery => "\u{E83F}",
+        }
+    }
+
+    pub fn index(self) -> usize {
         Self::ALL.iter().position(|&t| t == self).unwrap_or(0)
     }
 
@@ -51,6 +62,19 @@ impl Tab {
         let n = Self::ALL.len() as isize;
         Self::ALL[(self.index() as isize + delta).rem_euclid(n) as usize]
     }
+}
+
+/// Where the D-pad / arrows go: the vertical tab menu on the left, or the
+/// panel next to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Focus {
+    /// Up/Down pick a panel (it shows right away); Right / A go into it;
+    /// B closes the overlay.
+    #[default]
+    Menu,
+    /// Navigation inside the panel; B (or Left at its left edge) goes back
+    /// to the menu.
+    Panel,
 }
 
 /// An alt-tab-eligible top-level window.
@@ -210,6 +234,7 @@ impl VolumeRow {
 #[derive(Debug, Clone, Default)]
 pub struct Model {
     pub tab: Tab,
+    pub focus: Focus,
     pub tasks: Vec<Task>,
     /// Index into `tasks`. Meaningless when `tasks` is empty.
     pub selected: usize,
@@ -230,6 +255,8 @@ pub struct Model {
     /// Index into `batteries.devices`.
     pub battery_row: usize,
     pub confirm: Option<Confirm>,
+    /// Local time for the side menu, in the user's format ("21:47").
+    pub clock: String,
 }
 
 impl Model {
@@ -244,6 +271,7 @@ impl Model {
     /// front before the overlay opened) selected. Called on every show.
     pub fn reset(&mut self) {
         self.tab = Tab::ALL[0];
+        self.focus = Focus::Menu;
         self.selected = 0;
         self.scroll_row = 0;
         self.volume_row = 0;
@@ -375,6 +403,10 @@ impl Model {
         }
 
         match action {
+            Action::Back if self.focus == Focus::Panel => {
+                self.focus = Focus::Menu;
+                Vec::new()
+            }
             Action::Back => vec![Effect::Hide],
             Action::NextTab => {
                 self.tab = self.tab.step(1);
@@ -413,7 +445,22 @@ impl Model {
                 }
                 Vec::new()
             }
+            Action::Up | Action::Down | Action::Left | Action::Right | Action::Accept
+                if self.focus == Focus::Menu =>
+            {
+                match action {
+                    Action::Up => self.tab = self.tab.step(-1),
+                    Action::Down => self.tab = self.tab.step(1),
+                    Action::Right | Action::Accept => self.focus = Focus::Panel,
+                    _ => {}
+                }
+                Vec::new()
+            }
             Action::Up | Action::Down | Action::Left | Action::Right | Action::Accept => {
+                if action == Action::Left && self.at_left_edge() {
+                    self.focus = Focus::Menu;
+                    return Vec::new();
+                }
                 match self.tab {
                     Tab::Tasks => self.tasks_nav(action),
                     Tab::Volume => self.volume_nav(action),
@@ -422,6 +469,18 @@ impl Model {
                     Tab::Battery => self.battery_nav(action),
                 }
             }
+        }
+    }
+
+    /// Left from here goes back to the menu instead of moving in the panel.
+    fn at_left_edge(&self) -> bool {
+        match self.tab {
+            Tab::Tasks => {
+                self.tasks.is_empty() || self.selected.is_multiple_of(self.columns.max(1))
+            }
+            // Left turns the slider down, unless there is no slider.
+            Tab::Volume => self.volume_rows().is_empty(),
+            Tab::Output | Tab::Info | Tab::Battery => true,
         }
     }
 
@@ -468,8 +527,8 @@ impl Model {
             return Vec::new();
         }
         match action {
-            Action::Up | Action::Left => self.output_row = self.output_row.saturating_sub(1),
-            Action::Down | Action::Right => self.output_row = (self.output_row + 1).min(n - 1),
+            Action::Up => self.output_row = self.output_row.saturating_sub(1),
+            Action::Down => self.output_row = (self.output_row + 1).min(n - 1),
             Action::Accept => {
                 let row = self.output_row.min(n - 1);
                 if self.outputs.devices[row].is_default {
@@ -493,8 +552,8 @@ impl Model {
         let n = self.batteries.devices.len();
         match action {
             Action::Accept => return vec![Effect::RescanBatteries],
-            Action::Up | Action::Left => self.battery_row = self.battery_row.saturating_sub(1),
-            Action::Down | Action::Right => {
+            Action::Up => self.battery_row = self.battery_row.saturating_sub(1),
+            Action::Down => {
                 self.battery_row = (self.battery_row + 1).min(n.saturating_sub(1));
             }
             _ => {}
@@ -502,15 +561,15 @@ impl Model {
         Vec::new()
     }
 
-    /// Left/Right on the Info panel look at the previous/next task.
+    /// Up/Down on the Info panel look at the previous/next task.
     fn info_nav(&mut self, action: Action) -> Vec<Effect> {
         let n = self.tasks.len();
         if n == 0 {
             return Vec::new();
         }
         match action {
-            Action::Left | Action::Up => self.selected = self.selected.saturating_sub(1),
-            Action::Right | Action::Down => self.selected = (self.selected + 1).min(n - 1),
+            Action::Up => self.selected = self.selected.saturating_sub(1),
+            Action::Down => self.selected = (self.selected + 1).min(n - 1),
             Action::Accept => return vec![Effect::SwitchTo(self.tasks[self.selected].hwnd)],
             _ => {}
         }
@@ -599,6 +658,7 @@ mod tests {
     fn model_with_tasks(n: isize, columns: usize) -> Model {
         let mut m = Model::new(columns);
         m.tab = Tab::Tasks;
+        m.focus = Focus::Panel;
         m.set_tasks((1..=n).map(|i| task(i, i as u32 * 10)).collect());
         m
     }
@@ -607,8 +667,6 @@ mod tests {
     fn grid_navigation_clamps_and_moves_by_rows() {
         // 7 tasks in rows of 3: [0 1 2] [3 4 5] [6]
         let mut m = model_with_tasks(7, 3);
-        m.handle(Action::Left);
-        assert_eq!(m.selected, 0);
         m.handle(Action::Down);
         assert_eq!(m.selected, 3);
         m.handle(Action::Right);
@@ -629,6 +687,8 @@ mod tests {
     #[test]
     fn empty_task_list_does_nothing() {
         let mut m = Model::new(4);
+        m.tab = Tab::Tasks;
+        m.focus = Focus::Panel;
         for a in [
             Action::Up,
             Action::Accept,
@@ -638,6 +698,8 @@ mod tests {
             assert!(m.handle(a).is_empty());
         }
         assert!(m.confirm.is_none());
+        // Back from a panel goes to the menu, Back there closes.
+        m.handle(Action::Back);
         assert_eq!(m.handle(Action::Back), vec![Effect::Hide]);
     }
 
@@ -665,6 +727,7 @@ mod tests {
         m.selected = 2;
         m.reset();
         assert_eq!(m.tab, Tab::Volume);
+        assert_eq!(m.focus, Focus::Menu);
         assert_eq!(m.selected, 0);
     }
 
@@ -685,6 +748,7 @@ mod tests {
         });
         assert_eq!(m.output_row, 2);
         m.tab = Tab::Output;
+        m.focus = Focus::Panel;
         m.handle(Action::Up);
         assert_eq!(m.output_row, 1);
         // Device list changes order: the cursor stays on "b".
@@ -705,6 +769,7 @@ mod tests {
     fn accept_on_output_switches_default() {
         let mut m = Model::new(4);
         m.tab = Tab::Output;
+        m.focus = Focus::Panel;
         m.set_outputs(Outputs {
             devices: vec![dev("speakers", true), dev("tv", false)],
             error: None,
@@ -727,6 +792,7 @@ mod tests {
     fn output_without_devices_is_inert() {
         let mut m = Model::new(4);
         m.tab = Tab::Output;
+        m.focus = Focus::Panel;
         for a in [Action::Up, Action::Down, Action::Accept] {
             assert!(m.handle(a).is_empty());
         }
@@ -756,8 +822,10 @@ mod tests {
         assert_eq!(m.selected, 1);
         assert!(m.handle(Action::Back).is_empty());
         assert!(m.confirm.is_none());
-        // Back with no question closes the overlay.
+        // Back with no question leaves the panel, then closes the overlay.
+        assert!(m.handle(Action::Back).is_empty());
         assert_eq!(m.handle(Action::Back), vec![Effect::Hide]);
+        m.focus = Focus::Panel;
 
         m.handle(Action::KillTask);
         assert_eq!(m.handle(Action::Accept), vec![Effect::KillProcess(20)]);
@@ -821,6 +889,7 @@ mod tests {
             error: None,
         });
         m.tab = Tab::Volume;
+        m.focus = Focus::Panel;
         assert_eq!(m.handle(Action::Right), vec![Effect::SetMasterVolume(1.0)]);
         assert_eq!(m.handle(Action::Right), vec![Effect::SetMasterVolume(1.0)]);
         m.handle(Action::Down);
@@ -855,6 +924,7 @@ mod tests {
     fn volume_without_audio_is_inert() {
         let mut m = Model::new(4);
         m.tab = Tab::Volume;
+        m.focus = Focus::Panel;
         assert!(m.handle(Action::VolumeUp).is_empty());
         assert!(m.handle(Action::Right).is_empty());
         assert!(m.handle(Action::ToggleMute).is_empty());
@@ -864,9 +934,9 @@ mod tests {
     fn info_panel_walks_tasks() {
         let mut m = model_with_tasks(3, 4);
         m.tab = Tab::Info;
-        m.handle(Action::Right);
         m.handle(Action::Down);
-        m.handle(Action::Right);
+        m.handle(Action::Down);
+        m.handle(Action::Down);
         assert_eq!(m.selected, 2);
         assert_eq!(m.handle(Action::Accept), vec![Effect::SwitchTo(3)]);
     }
@@ -901,6 +971,7 @@ mod tests {
     fn battery_panel_navigation_and_rescan() {
         let mut m = Model::new(4);
         m.tab = Tab::Battery;
+        m.focus = Focus::Panel;
         assert!(!m.batteries.scanned);
         assert!(m.handle(Action::Down).is_empty());
         assert_eq!(m.battery_row, 0);
@@ -922,5 +993,64 @@ mod tests {
         assert_eq!(m.handle(Action::ActivateTask(2)), vec![Effect::SwitchTo(3)]);
         assert_eq!(m.selected, 2);
         assert!(m.handle(Action::ActivateTask(7)).is_empty());
+    }
+
+    #[test]
+    fn side_menu_walks_tabs_and_enters_panels() {
+        let mut m = model_with_tasks(3, 4);
+        m.reset();
+        // Up/Down move through the menu and wrap; the battery tab is one up.
+        m.handle(Action::Down);
+        assert_eq!(m.tab, Tab::Tasks);
+        m.handle(Action::Up);
+        m.handle(Action::Up);
+        assert_eq!(m.tab, Tab::Battery);
+        m.handle(Action::Down);
+        assert_eq!(m.tab, Tab::Volume);
+        // Left does nothing in the menu, Right enters the panel.
+        m.handle(Action::Left);
+        assert_eq!((m.tab, m.focus), (Tab::Volume, Focus::Menu));
+        m.handle(Action::Down);
+        m.handle(Action::Right);
+        assert_eq!(m.focus, Focus::Panel);
+        // Inside: Right moves through the tiles, Left at the first column
+        // goes back to the menu.
+        m.handle(Action::Right);
+        assert_eq!(m.selected, 1);
+        m.handle(Action::Left);
+        assert_eq!((m.selected, m.focus), (0, Focus::Panel));
+        m.handle(Action::Left);
+        assert_eq!(m.focus, Focus::Menu);
+        // A enters too; B goes back, and B in the menu closes.
+        m.handle(Action::Accept);
+        assert_eq!(m.focus, Focus::Panel);
+        assert!(m.handle(Action::Back).is_empty());
+        assert_eq!(m.focus, Focus::Menu);
+        assert_eq!(m.handle(Action::Back), vec![Effect::Hide]);
+    }
+
+    #[test]
+    fn menu_focus_never_touches_panel_state() {
+        let mut m = model_with_tasks(3, 4);
+        m.set_volume(Volume {
+            master: Some(Master {
+                level: 0.5,
+                muted: false,
+            }),
+            apps: Vec::new(),
+            error: None,
+        });
+        m.reset();
+        // Accept enters the panel instead of muting.
+        assert!(m.handle(Action::Accept).is_empty());
+        // In the volume panel Left turns the master down, not back to the menu.
+        assert!(matches!(
+            m.handle(Action::Left)[..],
+            [Effect::SetMasterVolume(v)] if (v - 0.45).abs() < 1e-4
+        ));
+        assert_eq!(m.focus, Focus::Panel);
+        // LB/RB switch panels and keep the focus where it is.
+        m.handle(Action::NextTab);
+        assert_eq!((m.tab, m.focus), (Tab::Tasks, Focus::Panel));
     }
 }
