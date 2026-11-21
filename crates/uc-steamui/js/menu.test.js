@@ -133,10 +133,12 @@ function inject() {
 function render(node, setup) {
   const texts = [];
   const hosts = [];
+  const all = [];
   const deep = (n) => {
     if (n == null || typeof n === 'boolean') return;
     if (typeof n === 'string' || typeof n === 'number') return void texts.push(String(n));
     if (Array.isArray(n)) return n.forEach(deep);
+    all.push(n);
     const t = n.type;
     if (typeof t === 'function' && t.prototype && t.prototype.isReactComponent) {
       const inst = new t(n.props || {});
@@ -155,7 +157,7 @@ function render(node, setup) {
     }
   };
   deep(node);
-  return { text: texts.join(' | '), hosts };
+  return { text: texts.join(' | '), hosts, all };
 }
 
 const sample = {
@@ -299,14 +301,23 @@ function fiberTests() {
         return h19(TabStrip, { tabs: steamTabs19(), m });
       },
     };
-    const Focusable = { $$typeof: Symbol.for('react.forward_ref'), render: function F() { return ['"flow-children"', 'onActivate', 'focusClassName']; } };
+    // As in current Steam: a plain function that takes its props apart.
+    const Focusable = function Rh(e) {
+      const { "flow-children": t, onActivate: n, onCancel: r, focusClassName: i, focusWithinClassName: a, ...o } = e;
+      void [t, n, r, i, a];
+      return h19('div', Object.assign({}, o));
+    };
+    // Passes `flow-children` on but isn't Focusable: must not be picked.
+    const Dialog = function Ta(p) {
+      return h19('div', { "flow-children": 'row', onActivate: p.onActivate, focusClassName: p.focusClassName });
+    };
     const root = fiberTree({
       type: null,
       kids: [
         {
           elementType: QamMemo,
           type: QamMemo.type,
-          kids: [{ type: 'div', memoizedProps: { children: h19('span') }, kids: [{ type: Focusable }] }],
+          kids: [{ type: 'div', memoizedProps: { children: h19('span') }, kids: [{ type: Dialog }, { type: Focusable }] }],
         },
       ],
     });
@@ -320,7 +331,7 @@ function fiberTests() {
     check(health.hooked === true && health.how === 'QuickAccessMenu component', 'modern: hooked through the fibers');
     check(health.diag.documents.includes('SP BPM_uid0') && !health.diag.documents.includes('contextmenu_1_uid0'), 'modern: looks in Big Picture, skips context menus');
     check(health.diag.element === 'react.transitional.element', 'modern: learned the React 19 element format');
-    check(health.found.Focusable === true, "modern: found Steam's Focusable on screen");
+    check(health.found.Focusable === true, "modern: found Steam's Focusable on screen (a plain function)");
     check(health.found.MenuStore === true, 'modern: found the menu store');
     check(QamMemo.type.__ucOriginal && qamFiber.type === QamMemo.type, 'modern: memo and mounted fiber wrapped');
 
@@ -339,6 +350,8 @@ function fiberTests() {
       check(r.hosts.every((n) => n.$$typeof === E19), 'modern: every element in the panel uses the React 19 format');
       const rootDiv = r.hosts.find((n) => n.props && n.props.className === 'uc-root');
       check(rootDiv && typeof rootDiv.props.ref === 'function', 'modern: ref passed as a prop (React 19)');
+      const rows = r.all.filter((n) => n.type === Focusable && n.props['flow-children']).map((n) => n.props['flow-children']);
+      check(rows.length > 0 && rows.every((v) => v === 'row'), "modern: button rows use Steam's Focusable with flow-children row");
     }
     check(window.__uc.open() === true && opened === 7331, 'modern: open() opens the menu on our tab');
     window.__uc.dispose();

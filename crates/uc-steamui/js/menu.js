@@ -385,9 +385,15 @@
     return s.includes(name + ',fallback') || (s.includes('"' + name + '"') && s.includes('fallback'));
   };
   const KIT = {
+    // A forwardRef object in React 18 builds, a plain function in React 19
+    // ones (`function Rh(e){let{"flow-children":t,onActivate:n,…,
+    // focusClassName:i,…}=e`). It takes its props apart first thing, which
+    // tells it apart from components that only pass `flow-children` on.
     Focusable: (e) => {
       const s = componentSource(e);
-      return typeof e === 'object' && s.includes('"flow-children"') && s.includes('onActivate') && s.includes('focusClassName');
+      if (!s.includes('"flow-children"') || !s.includes('onActivate') || !s.includes('focusClassName')) return false;
+      if (typeof e === 'object') return true;
+      return /\{\s*"flow-children"\s*:\s*[A-Za-z_$][\w$]*\s*,\s*onActivate\s*:\s*[A-Za-z_$]/.test(s.slice(0, 600));
     },
     SliderField: looks('SliderField'),
     ToggleField: looks('ToggleField'),
@@ -815,7 +821,7 @@
 
   /** A row of buttons the D-pad moves across. */
   function Buttons({ children }) {
-    if (K.Focusable) return h(K.Focusable, { className: 'uc-row', 'flow-children': 'horizontal' }, children);
+    if (K.Focusable) return h(K.Focusable, { className: 'uc-row', 'flow-children': 'row' }, children);
     return h('div', { className: 'uc-row' }, children);
   }
 
