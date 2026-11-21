@@ -1,15 +1,42 @@
 <p align="center"><img src="packaging/brand/logo.svg" alt="Ultimate Console logo" width="96" height="96"></p>
 
-# Ultimate Console
+# UC-SteamUI
 
-A lightweight Windows background agent that turns the PC into a couch console,
-GameScope-style. One hotkey hides the Explorer shell (no sign-out), wakes the
-Android TV, switches output to it and launches Steam Big Picture as the shell.
-Leaving Big Picture (or the same hotkey) puts the desktop, the monitors and
-the TV back the way they were.
+**Ultimate Console with its menu inside Steam.** A fork of
+[Ultimate-Console](https://github.com/OunissiDhiaEddine/Ultimate-Console)
+that moves the menu (volume, sound output, windows, performance, batteries,
+leaving gaming mode) into an **Ultimate Console tab in Big Picture's Quick
+Access Menu** (Steam + A), instead of a separate full-screen overlay.
 
-Status: **early development.** The workspace and shared types are in place;
-the features land work package by work package (see `docs/PLAN.md` §4).
+Everything else is Ultimate Console as before: a lightweight Windows
+background agent that turns the PC into a couch console, GameScope-style. One
+hotkey hides the Explorer shell (no sign-out), wakes the Android TV, switches
+output to it and launches Steam Big Picture as the shell. Leaving Big Picture
+(or the same hotkey) puts the desktop, the monitors and the TV back the way
+they were.
+
+Status: **early.** The console mode is Ultimate Console's, used daily. The
+Steam tab is new and still being tried on the real PC
+([checklist](docs/tests/WP-12.md)); a Steam update can break it, in which
+case the hotkey falls back to the full-screen overlay.
+
+## Install
+
+1. Download **UltimateConsole-win-Setup.exe** from the
+   [latest release](https://github.com/OunissiDhiaEddine/UC-SteamUI/releases/latest)
+   and run it. No admin needed. SmartScreen may warn because it isn't
+   code-signed: *More info → Run anyway*.
+   - Already have Ultimate Console? This installs over it as an update and
+     keeps your settings, TV pairing and hotkeys.
+2. **Restart Steam once** (*Steam → Exit*, then start it), so it opens the
+   port the tab needs (see [below](#the-menu-in-steam-steam--a)).
+3. Open Big Picture, press **Steam + A** and pick the controller icon. The
+   settings app's *Steam* page shows whether the tab is ready.
+
+Updates come from this repo's releases, checked daily and installed in
+desktop mode. To go back to plain Ultimate Console, install its Setup.exe and
+set `updates.repo` back to `OunissiDhiaEddine/Ultimate-Console` in
+`config.toml` (otherwise it updates from here again).
 
 ## What's in the box
 
@@ -116,21 +143,22 @@ cargo test --workspace
 .\target\release\uc-probe.exe --help
 ```
 
-From Linux you can type-check with
+From Linux or macOS you can type-check with
 `cargo check --workspace --target x86_64-pc-windows-msvc`; anything that
-touches hardware has to be tried on the real PC with `uc-probe`.
+touches hardware has to be tried on the real PC with `uc-probe`. The Steam
+tab's script has its own test against a fake Steam:
+`node crates/uc-steamui/js/menu.test.js`.
 
 Set `UC_HOME=C:\some\folder` to make every binary use that folder instead of
 `%APPDATA%`/`%LOCALAPPDATA%`, which is handy for trying things safely.
 
 ## Docs
 
-- This is the **UC-SteamUI** fork of
-  [Ultimate-Console](https://github.com/OunissiDhiaEddine/Ultimate-Console),
-  with the menu inside Steam. Installs and updates come from this repo's
-  [Releases](https://github.com/OunissiDhiaEddine/UC-SteamUI/releases).
-- Website of the original project (install and setup guide): https://ounissidhiaeddine.github.io/Ultimate-Console/
-  (source in `site/`, deployed by `.github/workflows/pages.yml`).
-- `docs/PLAN.md`: architecture, decisions and work packages.
+- Setup guide (TV, display, hotkeys) on the original project's website:
+  https://ounissidhiaeddine.github.io/Ultimate-Console/ (source in `site/`).
+  Its download buttons point at the original project; for this fork use the
+  [releases here](https://github.com/OunissiDhiaEddine/UC-SteamUI/releases).
+- `docs/PLAN.md`: architecture, decisions and work packages; §2.14 is the
+  Steam tab.
 - `docs/tests/`: short manual test checklists, one per work package.
 - `CONTRIBUTING.md`: branch, PR and code conventions.
