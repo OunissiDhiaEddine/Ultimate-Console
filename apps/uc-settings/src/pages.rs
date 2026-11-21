@@ -126,6 +126,16 @@ impl App {
             ui,
             "By default the overlay hotkey only works in gaming mode.",
         );
+        ui.checkbox(
+            &mut d.overlay.native_menu,
+            "Overlay hotkey opens the full-screen overlay",
+        );
+        hint(
+            ui,
+            "Off: in Big Picture the hotkey opens Steam's Quick Access Menu on the \
+             Ultimate Console tab (see the Steam page). The full-screen overlay is still \
+             used over games and apps, and whenever the Steam tab isn't available.",
+        );
         millis(
             ui,
             "Overlay resource refresh",
@@ -275,7 +285,9 @@ impl App {
         section(ui, "Controller");
         hint(
             ui,
-            "To open the overlay from a gamepad, map a Steam Input chord (for example \
+            "In Big Picture, press Steam + A (or the ... button) and pick the Ultimate \
+             Console tab: volume, sound output, windows, performance and batteries. For \
+             the full-screen overlay over other apps, map a Steam Input chord (for example \
              Guide + Y) to the overlay shortcut: Steam > Settings > Controller > \
              Guide Button Chord Layout > add a keyboard shortcut.",
         );
@@ -751,6 +763,38 @@ impl App {
                  Steam always leaves gaming mode.",
             );
         });
+
+        section(ui, "Quick Access Menu tab");
+        ui.checkbox(
+            &mut d.steam_menu.enabled,
+            "Add an Ultimate Console tab to Steam's Quick Access Menu (Steam + A)",
+        );
+        hint(
+            ui,
+            "Volume, sound output, windows, performance, batteries and \"Leave gaming mode\" \
+             inside Big Picture and the in-game overlay, replacing the full-screen overlay.",
+        );
+        ui.add_enabled_ui(d.steam_menu.enabled, |ui| {
+            ui.checkbox(
+                &mut d.steam_menu.manage_debug_file,
+                "Turn on Steam's DevTools port for it",
+            );
+            hint(
+                ui,
+                "Creates .cef-enable-remote-debugging in Steam's folder (removed again when \
+                 this is off, or on uninstall). Steam reads it at startup, so restart Steam \
+                 once. It lets programs on this PC control Steam's interface, the same as \
+                 Decky Loader or Millennium need; turn this off if one of those manages it.",
+            );
+            ui.horizontal(|ui| {
+                ui.label("DevTools port");
+                ui.add(egui::DragValue::new(&mut d.steam_menu.port).range(1..=65535));
+            });
+        });
+        if let Some(line) = self.status.as_ref().and_then(|s| s.steam_menu.as_deref()) {
+            ui.add_space(4.0);
+            ui.label(RichText::new(format!("Status: {line}")).weak());
+        }
     }
 
     fn power(&mut self, ui: &mut Ui) {

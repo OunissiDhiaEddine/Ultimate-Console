@@ -31,6 +31,7 @@ pub struct Config {
     pub steam: Steam,
     pub power: Power,
     pub overlay: Overlay,
+    pub steam_menu: SteamMenu,
     pub cursor: Cursor,
     pub updates: Updates,
 }
@@ -47,6 +48,7 @@ impl Default for Config {
             steam: Steam::default(),
             power: Power::default(),
             overlay: Overlay::default(),
+            steam_menu: SteamMenu::default(),
             cursor: Cursor::default(),
             updates: Updates::default(),
         }
@@ -291,6 +293,11 @@ pub struct Overlay {
     /// In gaming mode, handle the keyboard / headset volume keys (Explorer,
     /// which normally does, isn't running) and show a volume popup.
     pub volume_keys: bool,
+    /// The overlay hotkey opens the old full-screen overlay instead of the
+    /// Ultimate Console tab in Steam's Quick Access Menu. The hotkey falls
+    /// back to the full-screen overlay anyway while the Steam tab isn't
+    /// available.
+    pub native_menu: bool,
 }
 
 impl Default for Overlay {
@@ -299,6 +306,35 @@ impl Default for Overlay {
             in_desktop_mode: false,
             sample_interval_ms: 1000,
             volume_keys: true,
+            native_menu: false,
+        }
+    }
+}
+
+/// The Ultimate Console tab in Big Picture's Quick Access Menu (Steam + A),
+/// which replaces the full-screen overlay. The agent talks to Steam's UI over
+/// the Chromium DevTools port Steam opens when the
+/// `.cef-enable-remote-debugging` file is in its folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SteamMenu {
+    /// Add the tab to the Quick Access Menu.
+    pub enabled: bool,
+    /// Create `.cef-enable-remote-debugging` in Steam's folder (and remove
+    /// it again when this is turned off or on uninstall, if the agent made
+    /// it). Steam reads it when it starts, so it needs one Steam restart.
+    /// Turn off if Millennium, Decky or similar already manage it.
+    pub manage_debug_file: bool,
+    /// Steam's DevTools port (Steam always uses 8080).
+    pub port: u16,
+}
+
+impl Default for SteamMenu {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            manage_debug_file: true,
+            port: 8080,
         }
     }
 }
@@ -411,6 +447,9 @@ impl Config {
         }
         if self.tv.adb_port == 0 {
             problems.push("tv.adb_port must be > 0".into());
+        }
+        if self.steam_menu.port == 0 {
+            problems.push("steam_menu.port must be > 0".into());
         }
         if self.tv.wol_port == 0 {
             problems.push("tv.wol_port must be > 0".into());

@@ -1,6 +1,6 @@
 [package]
 name = "uc-agent"
-description = "Ultimate Console background agent: hotkeys, orchestrator, overlay host, IPC server (WP-08)."
+description = "Ultimate Console background agent: hotkeys, orchestrator, Steam menu and overlay host, IPC server (WP-08)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -16,6 +16,7 @@ uc-power.workspace = true
 uc-audio.workspace = true
 uc-sysinfo.workspace = true
 uc-overlay.workspace = true
+uc-steamui.workspace = true
 uc-update.workspace = true
 serde.workspace = true
 serde_json.workspace = true

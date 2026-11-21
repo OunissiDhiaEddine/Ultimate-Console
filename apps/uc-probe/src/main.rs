@@ -3,7 +3,8 @@
 //! Each work package adds its own subcommand group here
 //! (`display`, `tv`, `shell`, `audio`, `power`, `sysinfo`, `overlay`).
 //! WP-00 provides the `uc-core` ones: `paths`, `config`, `state`, `hotkey`.
-//! WP-01 adds `display`, WP-07 `overlay`.
+//! WP-01 adds `display`, WP-07 `overlay`; `steam-menu` tests the Quick
+//! Access Menu tab.
 //!
 //! Set `UC_HOME` to point every file at a scratch folder instead of the real
 //! `%APPDATA%`/`%LOCALAPPDATA%` ones.
@@ -11,6 +12,7 @@
 mod display;
 mod overlay;
 mod power;
+mod steam_menu;
 
 use std::process::ExitCode;
 
@@ -76,6 +78,10 @@ enum Command {
     Update(update::UpdateCmd),
     /// Show the overlay on the desktop, toggled by its hotkey (WP-07).
     Overlay(overlay::OverlayArgs),
+    /// The Ultimate Console tab in Steam's Quick Access Menu: DevTools
+    /// targets, inject and serve it, evaluate JavaScript, the switch file.
+    #[command(subcommand)]
+    SteamMenu(steam_menu::SteamMenuCmd),
     /// Read controller, headset and mouse batteries once, like the overlay's
     /// Battery panel. `--verbose` explains devices that were skipped.
     Battery {
@@ -150,6 +156,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         Command::Tv(args) => return tv::run(args),
         Command::Update(cmd) => return update::run(cmd),
         Command::Overlay(args) => return overlay::run(args),
+        Command::SteamMenu(cmd) => return steam_menu::run(cmd),
         Command::Paths => {
             let p = Paths::from_env()?;
             println!("config: {}", p.config_file().display());

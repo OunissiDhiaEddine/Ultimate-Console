@@ -260,6 +260,12 @@ pub struct Pads {
     last_scan: Option<Instant>,
 }
 
+impl Default for Pads {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Pads {
     pub fn new() -> Self {
         Self {

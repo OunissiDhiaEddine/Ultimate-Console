@@ -15,7 +15,7 @@ the features land work package by work package (see `docs/PLAN.md` §4).
 
 | Binary | What it does |
 |---|---|
-| `uc-agent.exe` | The one background process. Starts at logon, non-elevated. Owns the hotkeys, the gaming-mode state machine, TV control, sleep/resume hooks and the overlay. |
+| `uc-agent.exe` | The one background process. Starts at logon, non-elevated. Owns the hotkeys, the gaming-mode state machine, TV control, sleep/resume hooks, the Ultimate Console tab in Steam's Quick Access Menu and the fallback overlay. |
 | `uc-settings.exe` | Settings app. Only runs while open; talks to the agent over a named pipe. |
 | `uc-probe.exe` | Developer CLI to test each piece on its own on the real PC. |
 
@@ -26,8 +26,48 @@ All of them can be changed in the settings app.
 | Action | Default |
 |---|---|
 | Enter / leave gaming mode | `Ctrl+Alt+G` |
-| Show / hide the overlay | `Ctrl+Alt+O` |
+| Open the menu (Steam's Quick Access Menu on the Ultimate Console tab; the full-screen overlay over other apps) | `Ctrl+Alt+O` |
 | **Panic restore** (always brings the desktop back) | `Ctrl+Alt+Shift+R` |
+
+## The menu in Steam (Steam + A)
+
+In Big Picture, and in Steam's in-game overlay, press **Steam + A** (or the
+**…** button) and pick the **Ultimate Console** tab (the controller icon):
+
+- **Console**: mode, TV state, *Leave gaming mode* (press twice).
+- **Volume**: master volume and mute, and a slider per app.
+- **Sound output**: make another device the default.
+- **Windows**: every open window, with *Switch to*, *Close* and *End*
+  (press twice). Handy for apps that weren't started from Steam.
+- **Performance**: CPU, GPU, memory and the display mode.
+- **Batteries**: controllers, headsets and mice.
+
+It replaces the full-screen overlay as the main menu, so everything works with
+the controller like the rest of Big Picture. The agent's own idle cost is a
+localhost connection attempt every few seconds while Steam isn't up.
+
+How it gets in: Steam's interface is Chromium. With an empty
+`.cef-enable-remote-debugging` file in Steam's folder, Steam serves the Chrome
+DevTools protocol on `127.0.0.1:8080` when it starts; the agent connects,
+adds the tab to the Quick Access Menu's React component and answers it.
+Decky Loader and Millennium use the same switch.
+
+- **Restart Steam once** after installing or updating, so it sees the file.
+  The settings app's Steam page shows the tab's status.
+- The agent creates the file and removes it again when you turn the tab off or
+  uninstall (only if it made it). Turn *Turn on Steam's DevTools port* off if
+  Decky, Millennium or similar manage it.
+- While the port is open, any program on this PC can control Steam's
+  interface. That's the trade-off every Steam UI mod makes; turn the tab off
+  if you don't want it.
+- Steam's interface isn't a public API and changes with Steam updates. The
+  script looks everything up defensively and falls back to simpler controls;
+  if the tab stops showing, the hotkey still opens the full-screen overlay.
+  `uc-probe steam-menu run` shows what it found.
+
+Settings → General → *Overlay hotkey opens the full-screen overlay* goes back
+to the old behaviour. The volume popup for keyboard and headset volume keys in
+gaming mode is unchanged.
 
 ## Escape hatches: getting your desktop back
 
@@ -61,6 +101,7 @@ If the agent keeps putting you back into a bad state, delete
 | Crash-recovery state | `%LOCALAPPDATA%\UltimateConsole\state.json` |
 | Logs (7 days) | `%LOCALAPPDATA%\UltimateConsole\logs\` |
 | TV pairing key | `%LOCALAPPDATA%\UltimateConsole\adbkey` |
+| Steam's DevTools switch (if the agent made it) | `<Steam folder>\.cef-enable-remote-debugging`, noted in `%LOCALAPPDATA%\UltimateConsole\steam-debug-file.txt` |
 
 Uninstalling removes all of them.
 

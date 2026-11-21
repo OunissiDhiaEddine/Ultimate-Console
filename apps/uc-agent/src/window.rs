@@ -1,5 +1,7 @@
 //! The agent's hidden window on the main thread (plan §3): global hotkeys,
-//! suspend/resume notifications, the overlay hotkey, and in gaming mode the
+//! suspend/resume notifications, the overlay hotkey (Steam's Quick Access
+//! Menu on the Ultimate Console tab, or the full-screen overlay), and in
+//! gaming mode the
 //! media volume keys (Explorer normally handles those, and it isn't running)
 //! and the pointer auto-hide ([`crate::cursor`]).
 //!
@@ -31,11 +33,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     HOT_KEY_MODIFIERS, MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetMessageW,
-    GetWindowLongPtrW, MSG, PostMessageW, PostQuitMessage, RegisterClassW, SendMessageW,
-    SetWindowLongPtrW, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY,
-    WM_DISPLAYCHANGE, WM_HOTKEY, WM_INPUT, WM_POWERBROADCAST, WM_SETTINGCHANGE, WM_TIMER,
-    WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA,
+    GetForegroundWindow, GetMessageW, GetWindowLongPtrW, GetWindowTextW, MSG, PostMessageW,
+    PostQuitMessage, RegisterClassW, SendMessageW, SetWindowLongPtrW, TranslateMessage,
+    WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE, WM_HOTKEY, WM_INPUT,
+    WM_POWERBROADCAST, WM_SETTINGCHANGE, WM_TIMER, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 
@@ -46,6 +49,7 @@ use crate::overlay::OverlayHost;
 use crate::platform::SharedTv;
 use crate::service::Command;
 use crate::shared::Shared;
+use crate::steam_menu::SteamMenuHost;
 
 const CLASS_NAME: PCWSTR = w!("UltimateConsole.Agent");
 /// lparam: `*mut ApplyRequest`.
@@ -82,6 +86,7 @@ struct WindowState {
     tv: SharedTv,
     commands: Sender<Command>,
     overlay: Arc<OverlayHost>,
+    steam_menu: Arc<SteamMenuHost>,
     /// What is registered now, per action (index as in [`ACTIONS`]).
     registered: [Option<Hotkey>; 3],
     /// The volume keys are registered (gaming mode).
@@ -113,12 +118,14 @@ impl Window {
         tv: SharedTv,
         commands: Sender<Command>,
         overlay: Arc<OverlayHost>,
+        steam_menu: Arc<SteamMenuHost>,
     ) -> io::Result<Self> {
         let state = Box::into_raw(Box::new(WindowState {
             shared,
             tv,
             commands,
             overlay,
+            steam_menu,
             registered: [None; 3],
             volume_keys: false,
             cursor: Hider::start(),
@@ -382,12 +389,18 @@ impl WindowState {
                 let _ = self.commands.send(Command::Panic);
             }
             HotkeyAction::Overlay => {
-                // Called on the thread that received WM_HOTKEY, which holds
-                // the foreground right the overlay needs.
-                if overlay_allowed(self.shared.mode(), &self.shared.config()) {
-                    self.overlay.toggle();
-                } else {
+                let config = self.shared.config();
+                if !overlay_allowed(self.shared.mode(), &config) {
                     tracing::info!("overlay is off outside gaming mode");
+                } else if !config.overlay.native_menu
+                    && big_picture_in_front(&config.steam.bp_window_title)
+                    && self.steam_menu.open()
+                {
+                    tracing::info!("overlay hotkey: opened the Steam menu");
+                } else {
+                    // Called on the thread that received WM_HOTKEY, which
+                    // holds the foreground right the overlay needs.
+                    self.overlay.toggle();
                 }
             }
         }
@@ -443,6 +456,18 @@ impl WindowState {
     }
 }
 
+/// Whether Big Picture is the foreground window, so its Quick Access Menu
+/// would show. Otherwise (a game or app in front) the hotkey opens the
+/// full-screen overlay, which draws over it.
+fn big_picture_in_front(bp_title: &str) -> bool {
+    let mut buf = [0u16; 256];
+    // SAFETY: plain FFI calls; `buf` is a valid writable buffer and a null
+    // or stale window just yields no text.
+    let n = unsafe { GetWindowTextW(GetForegroundWindow(), &mut buf) };
+    let title = String::from_utf16_lossy(&buf[..n.max(0) as usize]);
+    !bp_title.is_empty() && title.trim().eq_ignore_ascii_case(bp_title.trim())
+}
+
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     // SAFETY: GWLP_USERDATA is 0 or the WindowState owned by `Window`, which
     // outlives the window; only this thread uses it.
@@ -459,6 +484,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 state.on_hotkey(hwnd, action);
             } else if let Some(key) = volume_key_from_id(id) {
                 state.overlay.volume_key(key);
+                state.steam_menu.refresh();
             }
             Some(LRESULT(0))
         }

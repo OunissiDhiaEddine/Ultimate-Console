@@ -21,6 +21,7 @@ use crate::orchestrator::{
 use crate::overlay::OverlayHost;
 use crate::platform::{RealPlatform, SharedTv};
 use crate::shared::Shared;
+use crate::steam_menu::SteamMenuHost;
 use crate::updates::Updates;
 use crate::window::WindowHandle;
 use crate::{autostart, hotkeys};
@@ -49,12 +50,19 @@ pub enum Command {
     Shutdown(Sender<IpcResponse>),
 }
 
+/// The agent's two menus: the Ultimate Console tab in Steam's Quick Access
+/// Menu and the full-screen overlay (fallback, plus the volume popup).
+pub struct Menus {
+    pub overlay: Arc<OverlayHost>,
+    pub steam: Arc<SteamMenuHost>,
+}
+
 pub struct Service {
     orch: Orchestrator<RealPlatform>,
     shared: Arc<Shared>,
     tv: SharedTv,
     window: WindowHandle,
-    overlay: Arc<OverlayHost>,
+    menus: Menus,
     updates: Arc<Updates>,
     config_file: PathBuf,
     config_stamp: Option<SystemTime>,
@@ -75,7 +83,7 @@ impl Service {
         shared: Arc<Shared>,
         tv: SharedTv,
         window: WindowHandle,
-        overlay: Arc<OverlayHost>,
+        menus: Menus,
         updates: Arc<Updates>,
         config_file: PathBuf,
     ) -> Self {
@@ -85,7 +93,7 @@ impl Service {
             shared,
             tv,
             window,
-            overlay,
+            menus,
             updates,
             config_file,
             config_stamp,
@@ -120,7 +128,7 @@ impl Service {
                 Err(RecvTimeoutError::Disconnected) => return,
             }
             if !overlay_allowed(self.orch.mode(), self.orch.config()) {
-                self.overlay.hide();
+                self.menus.overlay.hide();
             }
             let volume_keys = volume_keys_active(self.orch.mode(), self.orch.config());
             if volume_keys != self.volume_keys {
@@ -293,7 +301,8 @@ impl Service {
             self.shared
                 .report_error(format!("could not change start with Windows: {e}"));
         }
-        self.overlay.set_config(&new);
+        self.menus.overlay.set_config(&new);
+        self.menus.steam.set_config(old, &new);
         self.shared.set_config(new.clone());
         self.orch.set_config(new);
         self.shared.emit(IpcEvent::ConfigReloaded);

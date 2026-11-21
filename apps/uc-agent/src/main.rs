@@ -4,7 +4,10 @@
 //! main thread           hidden window: hotkeys, suspend/resume, overlay hotkey
 //! orchestrator thread   mode changes, config reload, TV keepalive (service.rs)
 //! IPC threads           named pipe for uc-settings and the uninstaller (ipc.rs)
-//! overlay thread        owned by uc-overlay (WP-07)
+//! overlay thread        owned by uc-overlay (WP-07): full-screen fallback
+//!                       menu and the volume popup
+//! Steam menu thread     owned by uc-steamui: the Ultimate Console tab in
+//!                       Steam's Quick Access Menu (steam_menu.rs)
 //! ```
 //!
 //! Command line:
@@ -32,6 +35,8 @@ mod ipc;
 mod platform;
 #[cfg(windows)]
 mod service;
+#[cfg(windows)]
+mod steam_menu;
 #[cfg(windows)]
 mod sys;
 #[cfg(windows)]
@@ -78,6 +83,7 @@ fn run(restarted: bool) -> Result<(), String> {
     use platform::{RealPlatform, Tv};
     use service::Service;
     use shared::Shared;
+    use steam_menu::SteamMenuHost;
     use window::Window;
 
     let paths = Paths::from_env().map_err(|e| e.to_string())?;
@@ -126,11 +132,18 @@ fn run(restarted: bool) -> Result<(), String> {
     let updates = updates::Updates::new(shared.clone());
     let (commands, inbox) = mpsc::channel();
     let overlay = Arc::new(OverlayHost::start(&config));
+    let steam_menu = Arc::new(SteamMenuHost::start(
+        &config,
+        shared.clone(),
+        commands.clone(),
+        paths.steam_debug_marker_file(),
+    ));
     let window = Window::create(
         shared.clone(),
         tv.clone(),
         commands.clone(),
         overlay.clone(),
+        steam_menu.clone(),
     )
     .map_err(|e| format!("could not create the agent window: {e}"))?;
     let handle = window.handle();
@@ -144,6 +157,7 @@ fn run(restarted: bool) -> Result<(), String> {
         commands: commands.clone(),
         window: handle,
         updates: updates.clone(),
+        steam_menu: steam_menu.clone(),
     }) {
         shared.report_error(format!("settings app connection unavailable: {e}"));
     }
@@ -159,7 +173,10 @@ fn run(restarted: bool) -> Result<(), String> {
                 shared,
                 tv,
                 handle,
-                overlay,
+                service::Menus {
+                    overlay,
+                    steam: steam_menu,
+                },
                 updates,
                 paths.config_file(),
             )
