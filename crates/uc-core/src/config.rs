@@ -358,6 +358,15 @@ impl Default for Cursor {
     }
 }
 
+/// Where updates come from: this fork, which has the Steam Quick Access Menu
+/// tab.
+pub const UPDATE_REPO: &str = "OunissiDhiaEddine/UC-SteamUI";
+
+/// The original project's repo, the default before the fork. Configs that
+/// still name it are moved to [`UPDATE_REPO`] when loaded, so an install of
+/// this build isn't "updated" back to a build without the Steam tab.
+pub const ORIGINAL_UPDATE_REPO: &str = "OunissiDhiaEddine/Ultimate-Console";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Updates {
@@ -370,7 +379,7 @@ impl Default for Updates {
     fn default() -> Self {
         Self {
             auto_check: true,
-            repo: "OunissiDhiaEddine/Ultimate-Console".into(),
+            repo: UPDATE_REPO.into(),
         }
     }
 }
@@ -404,6 +413,15 @@ impl Config {
     /// Brings an older schema up to [`SCHEMA_VERSION`]. Nothing to do yet.
     fn migrate(mut self) -> Self {
         self.schema = SCHEMA_VERSION;
+        if self
+            .updates
+            .repo
+            .trim()
+            .trim_matches('/')
+            .eq_ignore_ascii_case(ORIGINAL_UPDATE_REPO)
+        {
+            self.updates.repo = UPDATE_REPO.into();
+        }
         self
     }
 
@@ -599,6 +617,17 @@ mod tests {
         c.validate().unwrap();
         let back = Config::from_toml(&c.to_toml().unwrap(), path()).unwrap();
         assert_eq!(back, c);
+    }
+
+    #[test]
+    fn original_update_repo_moves_to_the_fork() {
+        assert_eq!(Config::default().updates.repo, UPDATE_REPO);
+        let old = format!("[updates]\nrepo = \"{ORIGINAL_UPDATE_REPO}\"");
+        let c = Config::from_toml(&old, path()).unwrap();
+        assert_eq!(c.updates.repo, UPDATE_REPO);
+        // A repo the user picked on purpose stays.
+        let mine = Config::from_toml("[updates]\nrepo = \"someone/else\"", path()).unwrap();
+        assert_eq!(mine.updates.repo, "someone/else");
     }
 
     #[test]

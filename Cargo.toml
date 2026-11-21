@@ -7,7 +7,7 @@ version = "0.1.18"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
-repository = "https://github.com/OunissiDhiaEddine/Ultimate-Console"
+repository = "https://github.com/OunissiDhiaEddine/UC-SteamUI"
 
 # Every crate takes shared dependencies from here (`foo.workspace = true`) so
 # parallel work packages stay on the same versions.

@@ -125,7 +125,11 @@ Set `UC_HOME=C:\some\folder` to make every binary use that folder instead of
 
 ## Docs
 
-- Website (install and setup guide): https://ounissidhiaeddine.github.io/Ultimate-Console/
+- This is the **UC-SteamUI** fork of
+  [Ultimate-Console](https://github.com/OunissiDhiaEddine/Ultimate-Console),
+  with the menu inside Steam. Installs and updates come from this repo's
+  [Releases](https://github.com/OunissiDhiaEddine/UC-SteamUI/releases).
+- Website of the original project (install and setup guide): https://ounissidhiaeddine.github.io/Ultimate-Console/
   (source in `site/`, deployed by `.github/workflows/pages.yml`).
 - `docs/PLAN.md`: architecture, decisions and work packages.
 - `docs/tests/`: short manual test checklists, one per work package.
