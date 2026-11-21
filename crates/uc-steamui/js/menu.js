@@ -6,23 +6,31 @@
  * DevTools port (see crates/uc-steamui). Plain JavaScript, no build step.
  * `__UC_VERSION__` and `__UC_BINDING__` are filled in by the agent.
  *
- * How it hooks in:
- *  1. Steam's UI is a React app bundled with webpack. We get webpack's module
- *     cache by pushing a fake chunk onto `webpackChunksteamui`.
- *  2. The Quick Access Menu component is a React.memo whose source mentions
- *     `QuickAccessMenuBrowserView`. We wrap its render function; on every
- *     render we look for the element that receives the `tabs` array (a level
- *     or two down) and append our tab to it. Instances that are already on
- *     screen are switched over through their React fibers.
- *  3. If that lookup fails (a Steam update renamed things), we look for any
- *     mounted component that renders a `tabs` array of QAM-like tabs and wrap
- *     that instead.
- *  4. The panel uses Steam's own SliderField / ToggleField / ButtonItem /
- *     Focusable when they can be found, so the controller moves through it
- *     like any other tab; otherwise simpler stand-ins built from Focusable.
+ * How it hooks in. Steam's UI is a React app. Older builds were bundled with
+ * webpack and exposed `webpackChunksteamui` and `SP_REACT`; current builds
+ * load as one ES module (`library.js`) and expose neither. So the script
+ * works from what is always there: the React fibers React attaches to every
+ * rendered DOM node (`__reactFiber$…`), in this window and in each Steam
+ * popup (`g_PopupManager`: the desktop client, Big Picture, overlays).
+ *
+ *  1. Walk the fiber trees. Every component type seen is a candidate for
+ *     Steam's building blocks (Focusable, SliderField …, found by marker
+ *     strings in their source) and for the Quick Access Menu itself.
+ *  2. The Quick Access Menu is the component whose source mentions
+ *     `QuickAccessMenuBrowserView`, or failing that whichever component
+ *     renders a `tabs` array of QAM-like tabs ({key, tab, panel}). We wrap
+ *     its render function (patching the memo object, so future mounts too,
+ *     and the mounted fibers); each render appends our tab to that array.
+ *  3. Elements are made without Steam's React: plain element objects whose
+ *     `$$typeof` is copied from Steam's own tabs (React 18 and 19 differ).
+ *     The panel is a class component, which needs no hooks: React gives it
+ *     `this.updater` for setState.
+ *  4. With webpack (older Steam) the same things are also looked up in the
+ *     module cache, and Steam's React is used when it can be found.
  *
  * Everything Steam-internal is looked up defensively. `window.__uc.health()`
- * reports what was found; the agent logs it and the settings app shows it.
+ * reports what was found; the agent logs it and `uc-probe steam-menu run`
+ * prints it.
  *
  * The page talks to the agent through a DevTools binding: calling
  * `window[BINDING](json)` raises Runtime.bindingCalled in the agent, which
@@ -63,6 +71,7 @@
     lastTabRender: 0,
     timers: [],
     undo: [],
+    diag: { documents: [], roots: 0, fibers: 0, types: 0, element: null },
   };
 
   // ---------------------------------------------------------------- bridge
@@ -136,10 +145,10 @@
     log('warn', text);
   }
 
-  // --------------------------------------------------------------- webpack
+  // ------------------------------------------------- webpack (older Steam)
 
   let wpRequire = null;
-  let moduleCount = -1;
+  let moduleCount = 0;
   let exportsCache = [];
 
   function webpackRequire() {
@@ -154,10 +163,10 @@
     return wpRequire;
   }
 
-  /** Every export of every loaded module (cached until more modules load). */
+  /** Every export of every loaded webpack module; empty without webpack. */
   function allExports() {
     const req = webpackRequire();
-    if (!req || !req.c) return [];
+    if (!req || !req.c) return exportsCache;
     const ids = Object.keys(req.c);
     if (ids.length === moduleCount) return exportsCache;
     moduleCount = ids.length;
@@ -186,8 +195,8 @@
     return out;
   }
 
-  function findExport(pred) {
-    for (const e of allExports()) {
+  function findIn(list, pred) {
+    for (const e of list) {
       try {
         if (pred(e)) return e;
       } catch (err) {
@@ -206,76 +215,219 @@
   };
 
   /** Source of a component: plain function, forwardRef or memo. */
+  const sourceCache = new WeakMap();
   function componentSource(c, depth) {
     if (!c || (depth || 0) > 3) return '';
-    if (typeof c === 'function') return fnSource(c);
-    if (typeof c !== 'object') return '';
-    return fnSource(c.render) || componentSource(c.type, (depth || 0) + 1);
+    if (typeof c !== 'function' && typeof c !== 'object') return '';
+    if (sourceCache.has(c)) return sourceCache.get(c);
+    let s = '';
+    if (typeof c === 'function') s = fnSource(c);
+    else s = fnSource(c.render) || componentSource(c.type, (depth || 0) + 1);
+    sourceCache.set(c, s);
+    return s;
   }
+
+  // ---------------------------------------------------------------- fibers
+
+  /** Every document Steam's UI renders into: this one and its popups. */
+  function documents() {
+    const docs = [{ name: 'SharedJSContext', doc: document }];
+    try {
+      const pm = window.g_PopupManager;
+      let entries = [];
+      if (pm && pm.m_mapPopups && typeof pm.m_mapPopups.entries === 'function') entries = Array.from(pm.m_mapPopups.entries());
+      else if (pm && typeof pm.GetPopups === 'function') entries = Array.from(pm.GetPopups() || []).map((p, i) => [String(i), p]);
+      for (const [name, p] of entries) {
+        if (/^contextmenu_/.test(name)) continue;
+        try {
+          const w = p && (p.m_popup || p.window || p.m_window);
+          if (w && w.document && w.document !== document) docs.push({ name, doc: w.document });
+        } catch (e) {
+          /* closed popup */
+        }
+      }
+    } catch (e) {
+      /* no popup manager */
+    }
+    uc.diag.documents = docs.map((d) => d.name);
+    return docs;
+  }
+
+  /** The React roots (HostRoot fibers) of every document. */
+  function rootFibers() {
+    const roots = new Set();
+    for (const { doc } of documents()) {
+      let els;
+      try {
+        els = doc.querySelectorAll ? doc.querySelectorAll('*') : [];
+      } catch (e) {
+        continue;
+      }
+      let fiberKey = null;
+      const limit = Math.min(els.length, 20000);
+      for (let i = 0; i < limit; i++) {
+        const el = els[i];
+        if (!fiberKey) {
+          fiberKey = Object.keys(el).find((k) => k.startsWith('__reactFiber$') || k.startsWith('__reactContainer$')) || null;
+          if (!fiberKey) continue;
+          fiberKey = fiberKey.startsWith('__reactContainer$') ? '__reactFiber$' + fiberKey.slice('__reactContainer$'.length) : fiberKey;
+        }
+        const own = el[fiberKey];
+        // Only climb from the top element of each React tree.
+        if (!own || (el.parentElement && el.parentElement[fiberKey])) continue;
+        let f = own;
+        let n = 0;
+        while (f.return && n++ < 10000) f = f.return;
+        roots.add(f);
+      }
+    }
+    uc.diag.roots = roots.size;
+    return Array.from(roots);
+  }
+
+  function walkFibers(visit) {
+    const stack = rootFibers();
+    const seen = new Set();
+    let n = 0;
+    while (stack.length && n < 500000) {
+      const f = stack.pop();
+      if (!f || seen.has(f)) continue;
+      seen.add(f);
+      n++;
+      if (visit(f) === false) break;
+      if (f.sibling) stack.push(f.sibling);
+      if (f.child) stack.push(f.child);
+    }
+    return n;
+  }
+
+  const isQamTab = (t) => t && typeof t === 'object' && 'key' in t && ('panel' in t || 'tab' in t);
+  const holdsTabs = (n) => n && n.props && Array.isArray(n.props.tabs) && n.props.tabs.some(isQamTab);
 
   // ----------------------------------------------------------------- React
 
-  let React = null;
-  function react() {
-    if (React) return React;
+  /** Steam's React, when it can be reached (older builds). */
+  let realReact = null;
+  function findReact() {
+    if (realReact) return realReact;
     const r = window.SP_REACT;
-    React = r && r.createElement && r.useState ? r : findExport((e) => e.createElement && e.useState && e.Component);
-    if (!React) problem('React not found');
-    return React;
+    if (r && r.createElement && r.Component) realReact = r;
+    else realReact = findIn(allExports(), (e) => e.createElement && e.Component && e.useState);
+    return realReact;
   }
 
-  const h = (...args) => react().createElement(...args);
+  /** `$$typeof` of React elements in this Steam, copied from Steam's own. */
+  let ELEMENT = null;
+  function learnElement(obj, depth) {
+    if (ELEMENT || !obj || typeof obj !== 'object' || (depth || 0) > 3) return;
+    if (Array.isArray(obj)) {
+      for (const o of obj.slice(0, 10)) learnElement(o, (depth || 0) + 1);
+      return;
+    }
+    const t = obj.$$typeof;
+    if (typeof t === 'symbol') {
+      const d = t.description || String(t);
+      if (/^react\.(transitional\.)?element$/.test(d)) {
+        ELEMENT = t;
+        uc.diag.element = d;
+      }
+    }
+  }
+  const isReact19 = () => !!(ELEMENT && /transitional/.test(ELEMENT.description || ''));
+
+  /** createElement, with Steam's React or by hand. */
+  function h(type, props, ...children) {
+    const R = findReact();
+    if (R) return R.createElement(type, props, ...children);
+    if (!ELEMENT) throw new Error('React element format not known yet');
+    const p = {};
+    let key = null;
+    let ref = null;
+    if (props) {
+      for (const k of Object.keys(props)) {
+        if (k === 'key') key = props[k] == null ? null : String(props[k]);
+        else if (k === 'ref') ref = props[k];
+        else p[k] = props[k];
+      }
+    }
+    if (children.length === 1) p.children = children[0];
+    else if (children.length > 1) p.children = children;
+    if (type && type.defaultProps) {
+      for (const k of Object.keys(type.defaultProps)) if (p[k] === undefined) p[k] = type.defaultProps[k];
+    }
+    if (ref != null && isReact19()) p.ref = ref;
+    return { $$typeof: ELEMENT, type, key, ref, props: p, _owner: null, _store: {} };
+  }
+
+  /**
+   * Base for class components that works without Steam's React: React only
+   * needs `prototype.isReactComponent`, and hands every instance an
+   * `updater` for setState.
+   */
+  function Base(props) {
+    this.props = props;
+    this.state = {};
+  }
+  Base.prototype.isReactComponent = {};
+  Base.prototype.setState = function setState(partial, callback) {
+    if (this.updater) this.updater.enqueueSetState(this, partial, callback, 'setState');
+  };
+  Base.prototype.forceUpdate = function forceUpdate(callback) {
+    if (this.updater) this.updater.enqueueForceUpdate(this, callback, 'forceUpdate');
+  };
 
   // ------------------------------------------------------ Steam components
 
   /** Steam's UI pieces, found by marker strings in their source. */
   const K = {};
-
-  let kitModuleCount = -1;
-  function resolveKit() {
-    // Only look again when Steam has loaded more code.
-    allExports();
-    if (kitModuleCount === moduleCount) return;
-    kitModuleCount = moduleCount;
-    const looks = (name) => (e) => {
+  const looks = (name) => (e) => {
+    const s = componentSource(e);
+    return s.includes(name + ',fallback') || (s.includes('"' + name + '"') && s.includes('fallback'));
+  };
+  const KIT = {
+    Focusable: (e) => {
       const s = componentSource(e);
-      return s.includes(name + ',fallback') || (s.includes('"' + name + '"') && s.includes('fallback'));
-    };
-    const wanted = {
-      Focusable: (e) => {
-        const s = componentSource(e);
-        return typeof e === 'object' && s.includes('"flow-children"') && s.includes('onActivate') && s.includes('focusClassName');
-      },
-      SliderField: looks('SliderField'),
-      ToggleField: looks('ToggleField'),
-      ButtonItem: (e) => looks('ButtonField')(e) || componentSource(e).includes('childrenContainerWidth:"min"'),
-      Field: (e) => {
-        const s = componentSource(e);
-        return s.includes('"shift-children-below"') || /[^A-Za-z]Field,fallback/.test(s);
-      },
-    };
-    for (const [name, pred] of Object.entries(wanted)) {
-      if (K[name]) continue;
-      K[name] = findExport(pred);
+      return typeof e === 'object' && s.includes('"flow-children"') && s.includes('onActivate') && s.includes('focusClassName');
+    },
+    SliderField: looks('SliderField'),
+    ToggleField: looks('ToggleField'),
+    ButtonItem: (e) => looks('ButtonField')(e) || componentSource(e).includes('childrenContainerWidth:"min"'),
+    Field: (e) => {
+      const s = componentSource(e);
+      return s.includes('"shift-children-below"') || /[^A-Za-z]Field,fallback/.test(s);
+    },
+  };
+
+  function resolveKit(candidates) {
+    for (const [name, pred] of Object.entries(KIT)) {
+      if (!K[name]) K[name] = findIn(candidates, pred);
       uc.found[name] = !!K[name];
-    }
-    if (!K.menuStore) {
-      K.menuStore = findMenuStore();
-      uc.found.MenuStore = !!K.menuStore;
     }
   }
 
-  /** The object with OpenQuickAccessMenu / CloseSideMenus, if we can reach it. */
+  /** The object with OpenQuickAccessMenu / CloseSideMenus, if reachable. */
   function findMenuStore() {
-    const candidates = [window.SteamUIStore];
-    const router = findExport((e) => e.WindowStore && (e.Navigate || e.NavigationManager));
-    if (router) candidates.push(router);
-    for (const c of candidates) {
+    const isStore = (ms) => ms && typeof ms.OpenQuickAccessMenu === 'function';
+    const fromInstance = (inst) => inst && (inst.MenuStore || inst.m_MenuStore);
+    const stores = [window.SteamUIStore];
+    const router = findIn(allExports(), (e) => e.WindowStore && (e.Navigate || e.NavigationManager));
+    if (router) stores.push(router);
+    for (const s of stores) {
       try {
-        const ws = c && c.WindowStore;
-        const inst = ws && (ws.GamepadUIMainWindowInstance || ws.MainWindowInstance);
-        const ms = inst && (inst.MenuStore || inst.m_MenuStore);
-        if (ms && typeof ms.OpenQuickAccessMenu === 'function') return ms;
+        const ws = s && (s.WindowStore || s.m_WindowStore);
+        if (!ws) continue;
+        for (const inst of [ws.GamepadUIMainWindowInstance, ws.MainWindowInstance]) {
+          if (isStore(fromInstance(inst))) return fromInstance(inst);
+        }
+        for (const mapName of ['m_mapDesiredWindowInstances', 'm_mapAppWindows']) {
+          const m = ws[mapName];
+          if (!m || typeof m.values !== 'function') continue;
+          for (const v of m.values()) {
+            for (const inst of Array.isArray(v) ? v : [v]) {
+              if (isStore(fromInstance(inst))) return fromInstance(inst);
+            }
+          }
+        }
       } catch (e) {
         /* keep looking */
       }
@@ -283,7 +435,7 @@
     return null;
   }
 
-  // -------------------------------------------------------- tree utilities
+  // ------------------------------------------------------------ the hook
 
   function findInTree(node, pred, depth) {
     depth = depth || 0;
@@ -319,9 +471,6 @@
     if (node.props) componentElements(node.props.children, out, depth + 1);
     return out;
   }
-
-  const isQamTab = (t) => t && typeof t === 'object' && 'key' in t && ('panel' in t || 'tab' in t);
-  const holdsTabs = (n) => n.props && Array.isArray(n.props.tabs) && n.props.tabs.some(isQamTab);
 
   /**
    * Wraps components so `after(args, result)` sees each render. One wrapper
@@ -366,13 +515,20 @@
     return wrap;
   }
 
-  // ------------------------------------------------------------ the hook
-
   /** Puts our tab into the `tabs` prop found in `tree`. */
   function addTab(tree, visible) {
     const holder = findInTree(tree, holdsTabs);
     if (!holder) return false;
     const tabs = holder.props.tabs;
+    for (const t of tabs) {
+      learnElement(t.panel);
+      learnElement(t.tab);
+      learnElement(t.title);
+    }
+    if (!findReact() && !ELEMENT) {
+      problem("can't tell how this Steam builds React elements; tab not added");
+      return false;
+    }
     if (!tabs.some((t) => t && t.key === TAB_KEY)) {
       const tab = {
         key: TAB_KEY,
@@ -422,67 +578,6 @@
     );
   }
 
-  /** Every document Steam's UI renders into: this one and its popups (Big Picture, overlays). */
-  function documents() {
-    const docs = new Set([document]);
-    try {
-      const pm = window.g_PopupManager;
-      let popups = [];
-      if (pm && typeof pm.GetPopups === 'function') popups = Array.from(pm.GetPopups() || []);
-      else if (pm && pm.m_mapPopups && typeof pm.m_mapPopups.values === 'function') popups = Array.from(pm.m_mapPopups.values());
-      for (const p of popups) {
-        try {
-          const w = p && (p.m_popup || p.window || p.m_window);
-          if (w && w.document) docs.add(w.document);
-        } catch (e) {
-          /* closed popup */
-        }
-      }
-    } catch (e) {
-      /* no popup manager */
-    }
-    return Array.from(docs);
-  }
-
-  function rootFibers() {
-    const roots = new Set();
-    for (const doc of documents()) {
-      const els = [];
-      try {
-        if (doc.getElementById) els.push(doc.getElementById('root'));
-        if (doc.body) els.push(doc.body, ...Array.from(doc.body.children));
-      } catch (e) {
-        continue;
-      }
-      for (const el of els) {
-        if (!el) continue;
-        for (const k of Object.keys(el)) {
-          let f = null;
-          if (k.startsWith('__reactContainer$')) f = el[k];
-          else if (k.startsWith('__reactFiber$')) f = el[k];
-          if (!f) continue;
-          while (f.return) f = f.return;
-          roots.add(f);
-        }
-      }
-    }
-    return Array.from(roots);
-  }
-
-  function walkFibers(visit) {
-    const stack = rootFibers();
-    const seen = new Set();
-    let n = 0;
-    while (stack.length && n++ < 400000) {
-      const f = stack.pop();
-      if (!f || seen.has(f)) continue;
-      seen.add(f);
-      if (visit(f) === false) return;
-      if (f.sibling) stack.push(f.sibling);
-      if (f.child) stack.push(f.child);
-    }
-  }
-
   /** Points mounted fibers rendering `orig` at `wrapped`. Returns how many. */
   function swapFiberTypes(orig, wrapped) {
     let count = 0;
@@ -500,79 +595,113 @@
     return count;
   }
 
-  /** Strategy 1: the memo'd QuickAccessMenu component, patched at its source. */
-  function patchQamModule() {
-    const qam = findExport(
-      (e) => typeof e === 'object' && e.$$typeof && typeof e.type === 'function' && fnSource(e.type).includes('QuickAccessMenuBrowserView'),
-    );
-    if (!qam) return false;
-    const orig = qam.type.__ucOriginal || qam.type;
-    const wrapped = levels[0](orig);
-    if (qam.type !== wrapped) {
-      qam.type = wrapped;
-      uc.undo.push(() => {
-        if (qam.type === wrapped) qam.type = orig;
-      });
+  /**
+   * Wraps a Quick Access Menu component: a memo or forwardRef object is
+   * patched in place (covers future mounts), and mounted fibers are switched.
+   */
+  function patchComponent(t) {
+    if (t && typeof t === 'object' && t.$$typeof && typeof t.type === 'function') {
+      const orig = t.type.__ucOriginal || t.type;
+      const wrapped = levels[0](orig);
+      if (t.type !== wrapped) {
+        t.type = wrapped;
+        uc.undo.push(() => {
+          if (t.type === wrapped) t.type = orig;
+        });
+      }
+      swapFiberTypes(orig, wrapped);
+      return true;
     }
-    uc.how = 'QuickAccessMenu component';
-    swapFiberTypes(orig, wrapped);
-    return true;
-  }
-
-  /** Strategy 2: find a mounted `tabs` holder and wrap whoever renders it. */
-  function patchFromFibers() {
-    let holderFiber = null;
-    walkFibers((f) => {
-      const p = f.memoizedProps;
-      if (p && Array.isArray(p.tabs) && p.tabs.some(isQamTab)) {
-        holderFiber = f;
-        return false;
+    if (t && typeof t === 'object' && t.$$typeof && typeof t.render === 'function') {
+      const orig = t.render.__ucOriginal || t.render;
+      const wrapped = levels[0](orig);
+      if (t.render !== wrapped) {
+        t.render = wrapped;
+        uc.undo.push(() => {
+          if (t.render === wrapped) t.render = orig;
+        });
       }
       return true;
+    }
+    if (typeof t === 'function') {
+      const wrapped = levels[0](t);
+      if (wrapped === t) return false;
+      return swapFiberTypes(t, wrapped) > 0;
+    }
+    return false;
+  }
+
+  /** Component types seen in the fiber trees, and what each scan turned up. */
+  const fiberTypes = [];
+  const typeSeen = new WeakSet();
+  let qamType = null;
+
+  function scanFibers() {
+    let holderFiber = null;
+    uc.diag.fibers = walkFibers((f) => {
+      const p = f.memoizedProps;
+      if (p && typeof p === 'object') {
+        if (!ELEMENT) learnElement(p.children);
+        if (!holderFiber && Array.isArray(p.tabs) && p.tabs.some(isQamTab)) holderFiber = f;
+      }
+      for (const t of [f.elementType, f.type]) {
+        if (!t || (typeof t !== 'function' && typeof t !== 'object') || typeSeen.has(t)) continue;
+        typeSeen.add(t);
+        fiberTypes.push(t);
+        if (!qamType && componentSource(t).includes('QuickAccessMenuBrowserView')) qamType = t;
+      }
     });
-    if (!holderFiber) return false;
-    // The component that created the holder: nearest function-component ancestor.
+    uc.diag.types = fiberTypes.length;
+    return holderFiber;
+  }
+
+  /** Strategy for the tabs holder: wrap the component that renders it. */
+  function patchHolderOwner(holderFiber) {
     let owner = holderFiber.return;
     while (owner && !(typeof owner.type === 'function' || (owner.type && typeof owner.type.render === 'function'))) {
       owner = owner.return;
     }
     if (!owner) return false;
-    const orig = owner.type;
-    const wrapped = levels[0](orig);
-    if (wrapped === orig) return false;
-    swapFiberTypes(orig, wrapped);
-    // Future mounts: patch a memo / forwardRef export that holds it.
-    const holder = findExport((e) => typeof e === 'object' && (e.type === orig || e.render === orig));
-    if (holder) {
-      const key = holder.type === orig ? 'type' : 'render';
-      const w = key === 'type' ? wrapped : levels[0]({ $$typeof: holder.$$typeof, render: orig }).render;
-      holder[key] = w;
-      uc.undo.push(() => {
-        if (holder[key] === w) holder[key] = orig;
-      });
-    }
-    uc.how = 'mounted Quick Access Menu';
-    return true;
+    // Prefer the memo / forwardRef object (elementType) so future mounts are covered.
+    const et = owner.elementType;
+    if (et && typeof et === 'object' && (et.type === owner.type || et.render)) return patchComponent(et);
+    return patchComponent(owner.type);
   }
 
   let hookedBy = null;
-  let qamModuleCount = -1;
-  let fiberTries = 0;
-  /**
-   * Tries to hook the Quick Access Menu; cheap once it has worked. The
-   * module search runs again only when Steam loads more code, the fiber
-   * walk (heavier) every fifth call.
-   */
+  let kitCount = -1;
+  let tries = 0;
+  /** Tries to hook the Quick Access Menu; cheap once it has worked. */
   function ensure() {
-    if (!webpackRequire() || !react()) return false;
-    resolveKit();
+    tries++;
+    const exportsList = allExports();
+    // The fiber walk is the heavy part: every other call until hooked, then
+    // only now and then to pick up Steam components that weren't mounted yet.
+    const missingKit = Object.keys(KIT).some((k) => !K[k]);
+    let holderFiber = null;
+    if (!hookedBy ? tries % 2 === 1 : missingKit && tries % 20 === 0) holderFiber = scanFibers();
+    if (kitCount !== exportsList.length + fiberTypes.length) {
+      kitCount = exportsList.length + fiberTypes.length;
+      resolveKit(exportsList.concat(fiberTypes));
+    }
+    if (!K.menuStore) K.menuStore = findMenuStore();
+    uc.found.MenuStore = !!K.menuStore;
     if (hookedBy) return true;
     try {
-      if (qamModuleCount !== moduleCount) {
-        qamModuleCount = moduleCount;
-        if (patchQamModule()) hookedBy = 'module';
+      const fromModule = findIn(
+        exportsList,
+        (e) => typeof e === 'object' && e.$$typeof && typeof e.type === 'function' && fnSource(e.type).includes('QuickAccessMenuBrowserView'),
+      );
+      if (fromModule && patchComponent(fromModule)) {
+        hookedBy = 'module';
+        uc.how = 'QuickAccessMenu component';
+      } else if (qamType && patchComponent(qamType)) {
+        hookedBy = 'fiber';
+        uc.how = 'QuickAccessMenu component';
+      } else if (holderFiber && patchHolderOwner(holderFiber)) {
+        hookedBy = 'fiber';
+        uc.how = 'mounted Quick Access Menu';
       }
-      if (!hookedBy && fiberTries++ % 5 === 0 && patchFromFibers()) hookedBy = 'fiber';
     } catch (e) {
       problem('hooking the Quick Access Menu failed', e);
     }
@@ -583,13 +712,14 @@
     return {
       version: VERSION,
       webpack: !!wpRequire,
-      react: !!React,
+      react: !!realReact || !!ELEMENT,
       hooked: !!hookedBy,
       how: uc.how,
       tabShown: uc.patched,
       lastTabRender: uc.lastTabRender,
       found: Object.assign({}, uc.found),
       problems: uc.problems.slice(),
+      diag: Object.assign({}, uc.diag),
     };
   }
 
@@ -748,97 +878,99 @@
   }
 
   /**
-   * Remembers a value the user just set for a moment, so the next poll
-   * (which may still have the old value) doesn't make the slider jump.
+   * The tab's content. A class component: it needs no hooks, so it works
+   * without access to Steam's React.
    */
-  function useOverrides() {
-    const R = react();
-    const [, force] = R.useState(0);
-    const ref = R.useRef(new Map());
-    return {
-      get(key, fallback) {
-        const o = ref.current.get(key);
-        return o && Date.now() - o.at < 1500 ? o.value : fallback;
-      },
-      set(key, value) {
-        ref.current.set(key, { value, at: Date.now() });
-        force((n) => n + 1);
-      },
-    };
-  }
+  class Panel extends Base {
+    constructor(props) {
+      super(props);
+      this.state = { data: null, error: null, armed: null };
+      /** Values the user just set, kept for a moment so a stale poll doesn't undo them. */
+      this.overrides = new Map();
+      /** Slider calls in flight, one per slider. */
+      this.throttled = new Map();
+      this.alive = false;
+      this.root = null;
+      this.setRoot = (el) => {
+        this.root = el;
+      };
+      this.onPush = (name) => {
+        if (name === 'refresh') this.refresh();
+      };
+    }
 
-  /** Two presses within 3 s: the first arms, the second does it. */
-  function useConfirm() {
-    const R = react();
-    const [armed, setArmed] = R.useState(null);
-    R.useEffect(() => {
-      if (!armed) return undefined;
-      const t = setTimeout(() => setArmed(null), 3000);
-      return () => clearTimeout(t);
-    }, [armed]);
-    return {
-      armed,
-      press(key, action) {
-        if (armed === key) {
-          setArmed(null);
-          action();
-        } else setArmed(key);
-      },
-    };
-  }
+    componentDidMount() {
+      this.alive = true;
+      listeners.add(this.onPush);
+      this.tick();
+    }
 
-  function Panel() {
-    const R = react();
-    const [state, setState] = R.useState(null);
-    const [error, setError] = R.useState(null);
-    const rootRef = R.useRef(null);
-    const pollRef = R.useRef(null);
-    const ov = useOverrides();
-    const confirm = useConfirm();
+    componentWillUnmount() {
+      this.alive = false;
+      clearTimeout(this.timer);
+      clearTimeout(this.armTimer);
+      listeners.delete(this.onPush);
+    }
 
-    const refresh = R.useCallback(async () => {
+    /** On screen right now (the menu is open on this tab)? */
+    shown() {
+      const el = this.root;
+      if (!el) return true;
+      if (!el.isConnected) return false;
+      const doc = el.ownerDocument;
+      return el.getClientRects().length > 0 && (!doc || doc.visibilityState !== 'hidden');
+    }
+
+    async tick() {
+      if (!this.alive) return;
+      if (this.shown()) await this.refresh();
+      if (this.alive) this.timer = setTimeout(() => this.tick(), 1000);
+    }
+
+    async refresh() {
       try {
-        const s = await call('state');
-        setState(s);
-        setError(null);
+        const data = await call('state');
+        if (this.alive) this.setState({ data, error: null });
       } catch (e) {
-        setError(e.message || String(e));
+        if (this.alive) this.setState({ error: e.message || String(e) });
       }
-    }, []);
-    pollRef.current = refresh;
+    }
 
-    R.useEffect(() => {
-      let alive = true;
-      let timer = null;
-      const shown = () => {
-        const el = rootRef.current;
-        if (!el || !el.isConnected) return false;
-        const doc = el.ownerDocument;
-        return el.getClientRects().length > 0 && (!doc || doc.visibilityState !== 'hidden');
-      };
-      const tick = async () => {
-        if (!alive) return;
-        if (shown()) await pollRef.current();
-        if (alive) timer = setTimeout(tick, 1000);
-      };
-      tick();
-      const onPush = (name) => {
-        if (name === 'refresh') pollRef.current();
-      };
-      listeners.add(onPush);
-      return () => {
-        alive = false;
-        clearTimeout(timer);
-        listeners.delete(onPush);
-      };
-    }, []);
+    override(key, fallback) {
+      const o = this.overrides.get(key);
+      return o && Date.now() - o.at < 1500 ? o.value : fallback;
+    }
 
-    // Sliders send at most one change per 80 ms, always the latest.
-    const throttled = R.useRef(new Map());
-    const sendThrottled = (key, method, params) => {
-      const t = throttled.current;
-      const entry = t.get(key) || { busy: false, next: null };
-      t.set(key, entry);
+    setOverride(key, value) {
+      this.overrides.set(key, { value, at: Date.now() });
+      this.forceUpdate();
+    }
+
+    /** Two presses within 3 s: the first arms, the second does it. */
+    confirm(key, action) {
+      clearTimeout(this.armTimer);
+      if (this.state.armed === key) {
+        this.setState({ armed: null });
+        action();
+      } else {
+        this.setState({ armed: key });
+        this.armTimer = setTimeout(() => this.alive && this.setState({ armed: null }), 3000);
+      }
+    }
+
+    act(method, params, after) {
+      return call(method, params)
+        .then(() => {
+          if (after) after();
+          return this.refresh();
+        })
+        .catch((e) => this.alive && this.setState({ error: e.message || String(e) }));
+    }
+
+    /** Sliders send at most one change per 80 ms, always the latest. */
+    sendThrottled(key, method, params) {
+      const entry = this.throttled.get(key) || { busy: false, next: null };
+      this.throttled.set(key, entry);
       entry.next = { method, params };
       if (entry.busy) return;
       const pump = () => {
@@ -850,35 +982,37 @@
         }
         entry.busy = true;
         call(job.method, job.params)
-          .catch((e) => setError(e.message || String(e)))
+          .catch((e) => this.alive && this.setState({ error: e.message || String(e) }))
           .finally(() => setTimeout(pump, 80));
       };
       pump();
-    };
-
-    const act = (method, params, after) =>
-      call(method, params)
-        .then(() => {
-          if (after) after();
-          return refresh();
-        })
-        .catch((e) => setError(e.message || String(e)));
-
-    const kids = [h('style', { key: 'css' }, CSS)];
-    if (error && !state) {
-      kids.push(h('div', { key: 'err', className: 'uc-error' }, `Can't reach Ultimate Console: ${error}`));
-    } else if (!state) {
-      kids.push(h('div', { key: 'wait', className: 'uc-sub', style: { padding: 16 } }, 'Loading…'));
-    } else {
-      kids.push(...sections(state, { ov, confirm, act, sendThrottled }));
-      if (error) kids.push(h('div', { key: 'err2', className: 'uc-error' }, error));
     }
-    return h('div', { className: 'uc-root', ref: rootRef }, kids);
+
+    render() {
+      try {
+        const { data, error } = this.state;
+        const kids = [h('style', { key: 'css' }, CSS)];
+        if (error && !data) {
+          kids.push(h('div', { key: 'err', className: 'uc-error' }, `Can't reach Ultimate Console: ${error}`));
+        } else if (!data) {
+          kids.push(h('div', { key: 'wait', className: 'uc-sub', style: { padding: 16 } }, 'Loading…'));
+        } else {
+          kids.push(...sections(data, this));
+          if (error) kids.push(h('div', { key: 'err2', className: 'uc-error' }, error));
+        }
+        return h('div', { className: 'uc-root', ref: this.setRoot }, kids);
+      } catch (e) {
+        problem('the tab failed to draw', e);
+        return h('div', { className: 'uc-error' }, `Ultimate Console: ${e.message || e}`);
+      }
+    }
   }
 
-  function sections(s, { ov, confirm, act, sendThrottled }) {
+  function sections(s, panel) {
     const out = [];
     const host = s.host || {};
+    const armed = panel.state.armed;
+    const ov = (key, fallback) => panel.override(key, fallback);
 
     // Console: mode, TV and leaving gaming mode.
     const consoleKids = [h(Line, { key: 'mode', label: 'Mode', value: host.mode || 'Unknown' })];
@@ -887,9 +1021,9 @@
       consoleKids.push(
         h(Action, {
           key: 'leave',
-          button: confirm.armed === 'leave' ? 'Press again to leave' : 'Leave gaming mode',
+          button: armed === 'leave' ? 'Press again to leave' : 'Leave gaming mode',
           description: 'Back to the desktop: monitors, Explorer and the TV as they were.',
-          onClick: () => confirm.press('leave', () => act('leaveGaming')),
+          onClick: () => panel.confirm('leave', () => panel.act('leaveGaming')),
         }),
       );
     }
@@ -902,19 +1036,19 @@
         h(Slider, {
           key: 'master',
           label: 'Volume',
-          value: ov.get('master', s.volume.level),
+          value: ov('master', s.volume.level),
           onChange: (v) => {
-            ov.set('master', v);
-            sendThrottled('master', 'setVolume', { level: v });
+            panel.setOverride('master', v);
+            panel.sendThrottled('master', 'setVolume', { level: v });
           },
         }),
         h(Toggle, {
           key: 'mute',
           label: 'Mute',
-          checked: ov.get('mute', s.volume.muted),
+          checked: ov('mute', s.volume.muted),
           onChange: (m) => {
-            ov.set('mute', m);
-            act('setMuted', { muted: m });
+            panel.setOverride('mute', m);
+            panel.act('setMuted', { muted: m });
           },
         }),
       );
@@ -927,10 +1061,10 @@
         h(Slider, {
           key,
           label: app.name + (app.muted ? ' (muted)' : ''),
-          value: ov.get(key, app.level),
+          value: ov(key, app.level),
           onChange: (v) => {
-            ov.set(key, v);
-            sendThrottled(key, 'setAppVolume', { pid: app.pid, level: v });
+            panel.setOverride(key, v);
+            panel.sendThrottled(key, 'setAppVolume', { pid: app.pid, level: v });
           },
         }),
       );
@@ -949,7 +1083,7 @@
               label: d.name,
               button: d.default ? 'In use' : 'Use this',
               disabled: d.default,
-              onClick: () => act('setOutput', { id: d.id }),
+              onClick: () => panel.act('setOutput', { id: d.id }),
             }),
           ),
         ),
@@ -973,15 +1107,15 @@
                 h(
                   Buttons,
                   null,
-                  h(Btn, { wide: true, onClick: () => act('switchTo', { hwnd: t.hwnd }, closeMenus) }, 'Switch to'),
-                  h(Btn, { onClick: () => act('closeWindow', { hwnd: t.hwnd }) }, 'Close'),
+                  h(Btn, { wide: true, onClick: () => panel.act('switchTo', { hwnd: t.hwnd }, closeMenus) }, 'Switch to'),
+                  h(Btn, { onClick: () => panel.act('closeWindow', { hwnd: t.hwnd }) }, 'Close'),
                   h(
                     Btn,
                     {
-                      danger: confirm.armed === 'kill' + t.pid,
-                      onClick: () => confirm.press('kill' + t.pid, () => act('endProcess', { pid: t.pid })),
+                      danger: armed === 'kill' + t.pid,
+                      onClick: () => panel.confirm('kill' + t.pid, () => panel.act('endProcess', { pid: t.pid })),
                     },
-                    confirm.armed === 'kill' + t.pid ? 'Sure?' : 'End',
+                    armed === 'kill' + t.pid ? 'Sure?' : 'End',
                   ),
                 ),
               ),
@@ -1014,7 +1148,7 @@
         ),
       );
     }
-    batKids.push(h(Buttons, { key: 'rescan' }, h(Btn, { wide: true, onClick: () => act('rescanBatteries') }, 'Read again')));
+    batKids.push(h(Buttons, { key: 'rescan' }, h(Btn, { wide: true, onClick: () => panel.act('rescanBatteries') }, 'Read again')));
     out.push(h(Section, { key: 'bat', title: 'Batteries' }, batKids));
 
     return out;
@@ -1041,9 +1175,13 @@
   const api = { version: VERSION, reply, push, health, ensure, open, closeMenus, dispose, call };
   window.__uc = api;
 
-  ensure();
-  // Big Picture's code loads later than the shared context, and Steam can
-  // rebuild the menu; keep trying until hooked, then just keep the kit fresh.
+  try {
+    ensure();
+  } catch (e) {
+    problem('first look failed', e);
+  }
+  // Big Picture opens later than the shared context, and Steam can rebuild
+  // the menu; keep trying until hooked, then just keep the kit fresh.
   uc.timers.push(
     setInterval(() => {
       try {
