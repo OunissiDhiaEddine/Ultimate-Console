@@ -282,7 +282,7 @@ function fiberTests() {
     owner.alternate = alt;
     install({ modules: [{}], document: docWith(owner.child) });
     const health = inject();
-    check(health.hooked && health.how === 'mounted Quick Access Menu', 'tabs holder: hooked');
+    check(health.hooked && health.how === 'tabs list', 'tabs holder: hooked');
     check(owner.type !== Owner && owner.type.__ucOriginal === Owner, 'mounted fiber points at the wrapper');
     check(alt.type === owner.type, 'alternate fiber too');
     check(OwnerMemo.type === owner.type, 'memo patched for future mounts');
@@ -356,6 +356,53 @@ function fiberTests() {
     check(window.__uc.open() === true && opened === 7331, 'modern: open() opens the menu on our tab');
     window.__uc.dispose();
     check(qamFiber.type.__ucOriginal === undefined, 'modern: dispose restores the fiber');
+  }
+
+  // ------ 6: current Steam's real layout: the list is built above jPi -> kPi
+
+  {
+    const vr = { vrPopupSize: { w: 1, h: 2 }, vrLocation: 'right' };
+    const tabs19 = () => [0, 3, 4, 5, 7, 6].map((key) => Object.assign({ key, tab: h19('svg'), title: 'T' + key, strTitle: 'T' + key, panel: h19('div') }, vr));
+    const KPi = function KPi() {
+      return null;
+    };
+    const JPi = function JPi(p) {
+      return h19('div', { children: h19(KPi, { tabs: p.tabs }) });
+    };
+    // Builds a fresh list on every render, like a component that maps settings to tabs.
+    const Creator = function Creator() {
+      return h19(JPi, { tabs: tabs19() });
+    };
+    // The component that mentions QuickAccessMenuBrowserView, elsewhere in the tree.
+    const Browser = { $$typeof: MEMO, type: function Br() { const m = 'QuickAccessMenuBrowserView'; return h19('div', { m }); } };
+    const live = tabs19();
+    const root = fiberTree({
+      type: null,
+      kids: [
+        { elementType: Browser, type: Browser.type, kids: [{ type: 'div' }] },
+        { type: Creator, kids: [{ type: JPi, memoizedProps: { tabs: live }, kids: [{ type: 'div', kids: [{ type: KPi, memoizedProps: { tabs: live } }] }] }] },
+      ],
+    });
+    const [browserFiber, creatorFiber] = [root.child, root.child.sibling];
+    const jpiFiber = creatorFiber.child;
+    install({ modern: true, popups: { 'SP BPM_uid0': docWith(browserFiber.child) } });
+    const health = inject();
+    check(health.hooked && /tabs list/.test(health.how), 'jPi/kPi: hooked through the tabs list (' + health.how + ')');
+    check(health.tabShown === true, 'jPi/kPi: tab reported shown');
+    check(health.diag.tabLists === 2, 'jPi/kPi: saw both components holding the list');
+    const ours = live.filter((t) => t.key === 7331);
+    check(ours.length === 1, 'jPi/kPi: tab added once to the list on screen');
+    check(ours[0] && ours[0].strTitle === 'Ultimate Console' && ours[0].vrLocation === 'right', "jPi/kPi: tab has Steam's fields");
+    check(creatorFiber.type.__ucOriginal === Creator, 'jPi/kPi: the list builder is wrapped');
+    check(jpiFiber.type.__ucOriginal === JPi, 'jPi/kPi: jPi (passes the list on) is wrapped too');
+    const fresh = findTabs(creatorFiber.type({}));
+    check(fresh && fresh.filter((t) => t.key === 7331).length === 1, 'jPi/kPi: a fresh render of the builder gets the tab');
+    check(findTabs(jpiFiber.type({ tabs: tabs19() })).some((t) => t.key === 7331), 'jPi/kPi: a fresh render of jPi gets it');
+    // A later look (Steam rebuilt the menu) doesn't add it twice.
+    for (let i = 0; i < 10; i++) window.__uc.ensure();
+    check(live.filter((t) => t.key === 7331).length === 1, 'jPi/kPi: still once after more looks');
+    window.__uc.dispose();
+    check(creatorFiber.type === Creator && jpiFiber.type === JPi, 'jPi/kPi: dispose restores both');
   }
 
   // --------------------------- 5: nothing there yet (Steam still loading)

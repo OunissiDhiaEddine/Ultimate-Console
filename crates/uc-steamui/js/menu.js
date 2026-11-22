@@ -521,36 +521,71 @@
     return wrap;
   }
 
-  /** Puts our tab into the `tabs` prop found in `tree`. */
-  function addTab(tree, visible) {
-    const holder = findInTree(tree, holdsTabs);
-    if (!holder) return false;
-    const tabs = holder.props.tabs;
+  /**
+   * Our tab, shaped like Steam's own: `{key, tab, title, strTitle, panel}`
+   * plus whatever else Steam's tabs carry (VR placement …), copied from one
+   * of them.
+   */
+  function makeTab(tabs, visible) {
+    const template = tabs.find((t) => t && typeof t === 'object' && t.key !== TAB_KEY) || {};
+    const tab = {};
+    for (const k of Object.keys(template)) {
+      if (!['key', 'tab', 'title', 'strTitle', 'panel'].includes(k)) tab[k] = template[k];
+    }
+    return Object.assign(tab, {
+      key: TAB_KEY,
+      title: TITLE,
+      strTitle: TITLE,
+      tab: h(TabIcon, null),
+      panel: h(Panel, null),
+      initialVisibility: visible !== false,
+    });
+  }
+
+  /**
+   * Appends our tab to Steam's `tabs` array (once). Returns the array that
+   * now has it: `tabs` itself, or a copy when Steam froze it (the caller
+   * puts the copy in place, if it can).
+   */
+  function injectInto(tabs, visible) {
+    if (tabs.some((t) => t && t.key === TAB_KEY)) return tabs;
     for (const t of tabs) {
-      learnElement(t.panel);
-      learnElement(t.tab);
-      learnElement(t.title);
+      learnElement(t && t.panel);
+      learnElement(t && t.tab);
+      learnElement(t && t.title);
     }
     if (!findReact() && !ELEMENT) {
       problem("can't tell how this Steam builds React elements; tab not added");
-      return false;
+      return null;
     }
-    if (!tabs.some((t) => t && t.key === TAB_KEY)) {
-      const tab = {
-        key: TAB_KEY,
-        title: TITLE,
-        tab: h(TabIcon, null),
-        panel: h(Panel, null),
-        initialVisibility: visible !== false,
-      };
-      if (Object.isFrozen(tabs)) holder.props.tabs = tabs.concat([tab]);
-      else tabs.push(tab);
-    }
+    const tab = makeTab(tabs, visible);
+    if (Object.isFrozen(tabs)) return tabs.concat([tab]);
+    tabs.push(tab);
+    return tabs;
+  }
+
+  function markShown(where) {
     uc.lastTabRender = Date.now();
     if (!uc.patched) {
       uc.patched = true;
-      log('info', `tab added to the Quick Access Menu (${uc.how})`);
+      log('info', `tab added to the Quick Access Menu (${where})`);
     }
+  }
+
+  /** Puts our tab into the `tabs` prop found in a render result. */
+  function addTab(tree, visible) {
+    const holder = findInTree(tree, holdsTabs);
+    if (!holder) return false;
+    const tabs = injectInto(holder.props.tabs, visible);
+    if (!tabs) return false;
+    if (tabs !== holder.props.tabs) {
+      try {
+        holder.props.tabs = tabs;
+      } catch (e) {
+        return false;
+      }
+    }
+    markShown(uc.how);
     return true;
   }
 
@@ -642,13 +677,14 @@
   const typeSeen = new WeakSet();
   let qamType = null;
 
+  /** Walks the fibers; returns every fiber that receives a QAM-like `tabs` array. */
   function scanFibers() {
-    let holderFiber = null;
+    const holders = [];
     uc.diag.fibers = walkFibers((f) => {
       const p = f.memoizedProps;
       if (p && typeof p === 'object') {
         if (!ELEMENT) learnElement(p.children);
-        if (!holderFiber && Array.isArray(p.tabs) && p.tabs.some(isQamTab)) holderFiber = f;
+        if (Array.isArray(p.tabs) && p.tabs.some(isQamTab)) holders.push(f);
       }
       for (const t of [f.elementType, f.type]) {
         if (!t || (typeof t !== 'function' && typeof t !== 'object') || typeSeen.has(t)) continue;
@@ -658,7 +694,8 @@
       }
     });
     uc.diag.types = fiberTypes.length;
-    return holderFiber;
+    uc.diag.tabLists = holders.length;
+    return holders;
   }
 
   /** Strategy for the tabs holder: wrap the component that renders it. */
@@ -674,39 +711,72 @@
     return patchComponent(owner.type);
   }
 
+  /**
+   * For each fiber holding Steam's `tabs` (current Steam: one component
+   * builds the list and passes it down through two more), add our tab to the
+   * list on screen now, and wrap the component that renders the holder so
+   * every later render gets it too.
+   */
+  function patchHolders(holders) {
+    let any = false;
+    for (const f of holders) {
+      for (const props of [f.memoizedProps, f.pendingProps, f.alternate && f.alternate.memoizedProps]) {
+        if (!props || !Array.isArray(props.tabs)) continue;
+        const tabs = injectInto(props.tabs, true);
+        if (tabs === props.tabs) {
+          any = true;
+          markShown('tabs list');
+        }
+      }
+      try {
+        if (patchHolderOwner(f)) any = true;
+      } catch (e) {
+        problem('wrapping the tabs list owner failed', e);
+      }
+    }
+    return any;
+  }
+
   let hookedBy = null;
   let kitCount = -1;
   let tries = 0;
-  /** Tries to hook the Quick Access Menu; cheap once it has worked. */
+  /**
+   * Tries to hook the Quick Access Menu; cheap once it has worked. The fiber
+   * walk is the heavy part: every other call until the tab is in, then every
+   * fifth (Steam rebuilds the menu when Big Picture restarts) and now and
+   * then for Steam components that weren't mounted yet.
+   */
   function ensure() {
     tries++;
     const exportsList = allExports();
-    // The fiber walk is the heavy part: every other call until hooked, then
-    // only now and then to pick up Steam components that weren't mounted yet.
     const missingKit = Object.keys(KIT).some((k) => !K[k]);
-    let holderFiber = null;
-    if (!hookedBy ? tries % 2 === 1 : missingKit && tries % 20 === 0) holderFiber = scanFibers();
+    const wantScan = !uc.patched ? tries % 2 === 1 : tries % 5 === 0 || (missingKit && tries % 20 === 0);
+    const holders = wantScan ? scanFibers() : [];
     if (kitCount !== exportsList.length + fiberTypes.length) {
       kitCount = exportsList.length + fiberTypes.length;
       resolveKit(exportsList.concat(fiberTypes));
     }
     if (!K.menuStore) K.menuStore = findMenuStore();
     uc.found.MenuStore = !!K.menuStore;
-    if (hookedBy) return true;
     try {
-      const fromModule = findIn(
-        exportsList,
-        (e) => typeof e === 'object' && e.$$typeof && typeof e.type === 'function' && fnSource(e.type).includes('QuickAccessMenuBrowserView'),
-      );
-      if (fromModule && patchComponent(fromModule)) {
-        hookedBy = 'module';
-        uc.how = 'QuickAccessMenu component';
-      } else if (qamType && patchComponent(qamType)) {
-        hookedBy = 'fiber';
-        uc.how = 'QuickAccessMenu component';
-      } else if (holderFiber && patchHolderOwner(holderFiber)) {
-        hookedBy = 'fiber';
-        uc.how = 'mounted Quick Access Menu';
+      if (!hookedBy) {
+        const fromModule = findIn(
+          exportsList,
+          (e) => typeof e === 'object' && e.$$typeof && typeof e.type === 'function' && fnSource(e.type).includes('QuickAccessMenuBrowserView'),
+        );
+        if (fromModule && patchComponent(fromModule)) {
+          hookedBy = 'module';
+          uc.how = 'QuickAccessMenu component';
+        } else if (qamType && patchComponent(qamType)) {
+          hookedBy = 'fiber';
+          uc.how = 'QuickAccessMenu component';
+        }
+      }
+      const lacking = holders.filter((f) => !f.memoizedProps.tabs.some((t) => t && t.key === TAB_KEY));
+      if (lacking.length && patchHolders(lacking)) {
+        if (!hookedBy) hookedBy = 'fiber';
+        if (!uc.how) uc.how = 'tabs list';
+        else if (!uc.how.includes('tabs list')) uc.how += ' + tabs list';
       }
     } catch (e) {
       problem('hooking the Quick Access Menu failed', e);
