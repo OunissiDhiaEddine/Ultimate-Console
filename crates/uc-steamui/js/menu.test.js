@@ -160,11 +160,31 @@ function render(node, setup) {
   return { text: texts.join(' | '), hosts, all };
 }
 
+/** Text of every page of the panel, plus the first page's render. */
+function renderPages(panel) {
+  let text = '';
+  let first = null;
+  for (const page of ['sound', 'windows', 'system', 'battery']) {
+    const r = render(panel, (inst) => {
+      inst.state.data = sample;
+      inst.state.page = page;
+    });
+    if (!first) first = r;
+    text += ' || ' + r.text;
+    if (!r.text.includes('Sound') || !r.text.includes('Battery')) text += ' [no page row on ' + page + ']';
+  }
+  return { text, first };
+}
+
 const sample = {
   host: { gaming: true, mode: 'Gaming', tv: 'Awake' },
   volume: { level: 0.45, muted: false },
   apps: [{ pid: 42, name: 'eldenring', level: 0.5, muted: true }],
-  outputs: [{ id: 'a', name: 'TV', default: true }, { id: 'b', name: 'Headset', default: false }],
+  outputs: [
+    { id: 'a', name: 'TV', default: true },
+    { id: 'b', name: 'Headset', default: false },
+    { id: 'c', name: 'Speakers (Steam Streaming Speakers)', default: false },
+  ],
   tasks: [{ hwnd: 4660, pid: 42, title: 'ELDEN RING', detail: 'eldenring.exe · CPU 30%' }],
   system: { cpu: '12%', gpu: null, ram: '8.0 GB of 32.0 GB' },
   display: '3840 × 2160 · 120 Hz',
@@ -232,11 +252,17 @@ const WANT = ['Leave gaming mode', 'Volume', '45%', 'eldenring (muted)', 'Headse
   const tab = findTabs(P.type({})).find((t) => t.key === 7331);
   let r = null;
   try {
-    r = render(tab.panel, (inst) => (inst.state.data = sample));
+    r = renderPages(tab.panel);
   } catch (e) {
     check(false, 'panel renders: ' + e);
   }
-  if (r) for (const want of WANT) check(r.text.includes(want), 'panel shows ' + JSON.stringify(want));
+  if (r) {
+    for (const want of WANT) check(r.text.includes(want), 'panel shows ' + JSON.stringify(want));
+    check(!r.text.includes('[no page row'), 'every page has the page row');
+    check(!r.text.includes('Steam Streaming'), "Steam's streaming devices are hidden");
+    const sound = render(tab.panel, (inst) => (inst.state.data = sample)).text;
+    check(sound.includes('Volume') && !sound.includes('ELDEN RING') && !sound.includes('Xbox Controller'), 'one page at a time (Sound first)');
+  }
   check(render(tab.panel).text.includes('Loading'), 'panel says Loading before data arrives');
   check(render(tab.tab).hosts.length > 0, 'tab icon renders');
   window.__uc.dispose();
@@ -340,13 +366,15 @@ function fiberTests() {
     check(!!tab, 'modern: tab added');
     check(tab && tab.panel.$$typeof === E19 && tab.tab.$$typeof === E19, "modern: elements use Steam's format");
     let r = null;
+    let pages = null;
     try {
       r = render(tab.panel, (inst) => (inst.state.data = sample));
+      pages = renderPages(tab.panel);
     } catch (e) {
       check(false, 'modern: panel renders: ' + e);
     }
-    if (r) {
-      for (const want of ['Leave gaming mode', 'ELDEN RING', 'Xbox Controller']) check(r.text.includes(want), 'modern: panel shows ' + JSON.stringify(want));
+    if (r && pages) {
+      for (const want of ['Leave gaming mode', 'ELDEN RING', 'Xbox Controller']) check(pages.text.includes(want), 'modern: panel shows ' + JSON.stringify(want));
       check(r.hosts.every((n) => n.$$typeof === E19), 'modern: every element in the panel uses the React 19 format');
       const rootDiv = r.hosts.find((n) => n.props && n.props.className === 'uc-root');
       check(rootDiv && typeof rootDiv.props.ref === 'function', 'modern: ref passed as a prop (React 19)');
@@ -391,6 +419,7 @@ function fiberTests() {
     check(health.tabShown === true, 'jPi/kPi: tab reported shown');
     check(health.diag.tabLists === 2, 'jPi/kPi: saw both components holding the list');
     const ours = live.filter((t) => t.key === 7331);
+    check(live.map((t) => t.key).join(',') === '0,3,4,7331,5,7,6', 'jPi/kPi: tab sits right after the gear (key 4): ' + live.map((t) => t.key).join(','));
     check(ours.length === 1, 'jPi/kPi: tab added once to the list on screen');
     check(ours[0] && ours[0].strTitle === 'Ultimate Console' && ours[0].vrLocation === 'right', "jPi/kPi: tab has Steam's fields");
     check(creatorFiber.type.__ucOriginal === Creator, 'jPi/kPi: the list builder is wrapped');

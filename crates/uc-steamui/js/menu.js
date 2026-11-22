@@ -542,8 +542,17 @@
     });
   }
 
+  /** Steam's settings (gear) tab: key 4 in current Steam, or a title like it. */
+  const SETTINGS_KEY = 4;
+  /** Where our tab goes: right after the settings tab, else at the end. */
+  function placeAfterSettings(tabs) {
+    let i = tabs.findIndex((t) => t && t.key === SETTINGS_KEY);
+    if (i < 0) i = tabs.findIndex((t) => t && /settings|réglages|paramètres|einstellungen|ajustes/i.test(String(t.strTitle || '')));
+    return i < 0 ? tabs.length : i + 1;
+  }
+
   /**
-   * Appends our tab to Steam's `tabs` array (once). Returns the array that
+   * Adds our tab to Steam's `tabs` array (once), right after the gear. Returns the array that
    * now has it: `tabs` itself, or a copy when Steam froze it (the caller
    * puts the copy in place, if it can).
    */
@@ -559,8 +568,9 @@
       return null;
     }
     const tab = makeTab(tabs, visible);
-    if (Object.isFrozen(tabs)) return tabs.concat([tab]);
-    tabs.push(tab);
+    const at = placeAfterSettings(tabs);
+    if (Object.isFrozen(tabs)) return tabs.slice(0, at).concat([tab], tabs.slice(at));
+    tabs.splice(at, 0, tab);
     return tabs;
   }
 
@@ -839,18 +849,28 @@
 
   const CSS = `
     .uc-root { padding: 0 0 12px; font-size: 14px; }
-    .uc-title { text-transform: uppercase; font-size: 12px; font-weight: 700; letter-spacing: .04em;
-      color: #b8bcbf; padding: 14px 16px 4px; }
-    .uc-line { display: flex; justify-content: space-between; gap: 8px; padding: 6px 16px; color: #dcdedf; }
-    .uc-line .uc-dim, .uc-dim { color: #8b929a; }
-    .uc-sub { font-size: 12px; color: #8b929a; padding: 0 16px 4px; }
-    .uc-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 16px 8px; }
-    .uc-btn { background: rgba(255,255,255,.08); color: #dcdedf; border-radius: 3px; padding: 6px 12px;
-      font-size: 13px; cursor: pointer; user-select: none; text-align: center; min-width: 32px; }
+    .uc-nav { display: flex; gap: 4px; padding: 4px 12px 8px; }
+    .uc-nav .uc-btn { flex: 1; padding: 6px 4px; font-size: 12px; font-weight: 600; }
+    .uc-title { text-transform: uppercase; font-size: 11px; font-weight: 700; letter-spacing: .04em;
+      color: #8b929a; padding: 10px 16px 2px; }
+    .uc-line { display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+      padding: 4px 16px; color: #dcdedf; }
+    .uc-line > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .uc-dim { color: #8b929a; white-space: nowrap; }
+    .uc-sub { font-size: 12px; color: #8b929a; padding: 0 16px 2px; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; }
+    .uc-row { display: flex; align-items: center; gap: 6px; padding: 2px 16px 6px; }
+    .uc-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #dcdedf; }
+    .uc-value { width: 40px; text-align: right; color: #8b929a; font-size: 13px; }
+    .uc-btn { background: rgba(255,255,255,.08); color: #dcdedf; border-radius: 3px; padding: 5px 10px;
+      font-size: 13px; cursor: pointer; user-select: none; text-align: center; min-width: 28px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .uc-btn.uc-wide { flex: 1; }
+    .uc-btn.uc-left { text-align: left; }
     .uc-btn.uc-on { background: #1a9fff; color: #fff; }
-    .uc-btn.uc-danger { background: rgba(214,62,62,.35); }
+    .uc-btn.uc-danger { background: rgba(214,62,62,.45); }
     .uc-btn.uc-focus, .uc-btn.gpfocus, .uc-btn:hover { background: #dcdedf; color: #0e141b; }
+    .uc-task { padding: 4px 0 2px; }
     .uc-bar { height: 4px; background: rgba(255,255,255,.12); border-radius: 2px; margin: 0 16px 8px; }
     .uc-bar > div { height: 100%; background: #1a9fff; border-radius: 2px; }
     .uc-bar.uc-low > div { background: #d63e3e; }
@@ -880,8 +900,8 @@
     return h('div', { className, onClick: run, tabIndex: 0 }, children);
   }
 
-  function Btn({ children, onClick, wide, on, danger }) {
-    const cls = ['uc-btn', wide && 'uc-wide', on && 'uc-on', danger && 'uc-danger'].filter(Boolean).join(' ');
+  function Btn({ children, onClick, wide, on, danger, left }) {
+    const cls = ['uc-btn', wide && 'uc-wide', on && 'uc-on', danger && 'uc-danger', left && 'uc-left'].filter(Boolean).join(' ');
     return h(Focus, { className: cls, onActivate: onClick }, children);
   }
 
@@ -890,9 +910,10 @@
   }
 
   /** A row of buttons the D-pad moves across. */
-  function Buttons({ children }) {
-    if (K.Focusable) return h(K.Focusable, { className: 'uc-row', 'flow-children': 'row' }, children);
-    return h('div', { className: 'uc-row' }, children);
+  function Buttons({ children, className }) {
+    const cls = className || 'uc-row';
+    if (K.Focusable) return h(K.Focusable, { className: cls, 'flow-children': 'row' }, children);
+    return h('div', { className: cls }, children);
   }
 
   function Line({ label, value }) {
@@ -900,11 +921,14 @@
     return h('div', { className: 'uc-line' }, h('span', null, label), h('span', { className: 'uc-dim' }, value));
   }
 
-  /** Volume-style 0..1 slider: Steam's SliderField, or label + [−] [+]. */
-  function Slider({ label, value, onChange }) {
+  /**
+   * Volume-style 0..1 slider: Steam's SliderField, or one line
+   * `name  45%  [−] [+]`, with `extra` (the mute button) at the end.
+   */
+  function Slider({ label, value, onChange, extra }) {
     const pct = Math.round((value || 0) * 100);
     if (K.SliderField) {
-      return h(K.SliderField, {
+      const slider = h(K.SliderField, {
         label,
         value: pct,
         min: 0,
@@ -915,17 +939,16 @@
         bottomSeparator: 'none',
         onChange: (v) => onChange(Math.max(0, Math.min(100, v)) / 100),
       });
+      return extra ? h('div', null, slider, h(Buttons, null, extra)) : slider;
     }
     return h(
-      'div',
+      Buttons,
       null,
-      h('div', { className: 'uc-line' }, h('span', null, label), h('span', { className: 'uc-dim' }, pct + '%')),
-      h(
-        Buttons,
-        null,
-        h(Btn, { wide: true, onClick: () => onChange(Math.max(0, pct - 5) / 100) }, '−'),
-        h(Btn, { wide: true, onClick: () => onChange(Math.min(100, pct + 5) / 100) }, '+'),
-      ),
+      h('span', { className: 'uc-label' }, label),
+      h('span', { className: 'uc-value' }, pct + '%'),
+      h(Btn, { onClick: () => onChange(Math.max(0, pct - 5) / 100) }, '−'),
+      h(Btn, { onClick: () => onChange(Math.min(100, pct + 5) / 100) }, '+'),
+      extra || null,
     );
   }
 
@@ -953,6 +976,16 @@
     return h('div', { className: 'uc-bar' + (low ? ' uc-low' : '') }, h('div', { style: { width: Math.round(fraction * 100) + '%' } }));
   }
 
+  /** The tab's pages, in the order of the row at the top. */
+  const PAGES = [
+    ['sound', 'Sound'],
+    ['windows', 'Windows'],
+    ['system', 'System'],
+    ['battery', 'Battery'],
+  ];
+  /** The page last shown, so the tab reopens where it was left. */
+  let lastPage = 'sound';
+
   /**
    * The tab's content. A class component: it needs no hooks, so it works
    * without access to Steam's React.
@@ -960,7 +993,7 @@
   class Panel extends Base {
     constructor(props) {
       super(props);
-      this.state = { data: null, error: null, armed: null };
+      this.state = { data: null, error: null, armed: null, page: lastPage };
       /** Values the user just set, kept for a moment so a stale poll doesn't undo them. */
       this.overrides = new Map();
       /** Slider calls in flight, one per slider. */
@@ -1020,6 +1053,11 @@
     setOverride(key, value) {
       this.overrides.set(key, { value, at: Date.now() });
       this.forceUpdate();
+    }
+
+    showPage(page) {
+      lastPage = page;
+      this.setState({ page, armed: null });
     }
 
     /** Two presses within 3 s: the first arms, the second does it. */
@@ -1084,31 +1122,27 @@
     }
   }
 
+  /** Steam's own virtual devices for Remote Play; not something to pick. */
+  const isStreamingDevice = (d) => /steam streaming/i.test(d.name || '');
+
+  /** The row of pages at the top, then the chosen page. */
   function sections(s, panel) {
+    const page = PAGES.some(([id]) => id === panel.state.page) ? panel.state.page : 'sound';
+    const nav = h(
+      Buttons,
+      { key: 'nav', className: 'uc-nav' },
+      PAGES.map(([id, label]) => h(Btn, { key: id, on: id === page, onClick: () => panel.showPage(id) }, label)),
+    );
+    const body = { sound: soundPage, windows: windowsPage, system: systemPage, battery: batteryPage }[page](s, panel);
+    return [nav, h('div', { key: 'page-' + page }, body)];
+  }
+
+  function soundPage(s, panel) {
     const out = [];
-    const host = s.host || {};
-    const armed = panel.state.armed;
     const ov = (key, fallback) => panel.override(key, fallback);
-
-    // Console: mode, TV and leaving gaming mode.
-    const consoleKids = [h(Line, { key: 'mode', label: 'Mode', value: host.mode || 'Unknown' })];
-    if (host.tv) consoleKids.push(h(Line, { key: 'tv', label: 'TV', value: host.tv }));
-    if (host.gaming) {
-      consoleKids.push(
-        h(Action, {
-          key: 'leave',
-          button: armed === 'leave' ? 'Press again to leave' : 'Leave gaming mode',
-          description: 'Back to the desktop: monitors, Explorer and the TV as they were.',
-          onClick: () => panel.confirm('leave', () => panel.act('leaveGaming')),
-        }),
-      );
-    }
-    out.push(h(Section, { key: 'console', title: 'Console' }, consoleKids));
-
-    // Volume.
-    const vol = [];
     if (s.volume) {
-      vol.push(
+      const muted = ov('mute', s.volume.muted);
+      out.push(
         h(Slider, {
           key: 'master',
           label: 'Volume',
@@ -1117,105 +1151,118 @@
             panel.setOverride('master', v);
             panel.sendThrottled('master', 'setVolume', { level: v });
           },
-        }),
-        h(Toggle, {
-          key: 'mute',
-          label: 'Mute',
-          checked: ov('mute', s.volume.muted),
-          onChange: (m) => {
-            panel.setOverride('mute', m);
-            panel.act('setMuted', { muted: m });
-          },
+          extra: h(
+            Btn,
+            {
+              on: muted,
+              onClick: () => {
+                panel.setOverride('mute', !muted);
+                panel.act('setMuted', { muted: !muted });
+              },
+            },
+            muted ? 'Muted' : 'Mute',
+          ),
         }),
       );
     } else {
-      vol.push(h('div', { key: 'novol', className: 'uc-sub' }, s.volumeError || 'No audio output'));
+      out.push(h('div', { key: 'novol', className: 'uc-sub' }, s.volumeError || 'No audio output'));
     }
-    for (const app of s.apps || []) {
-      const key = 'app' + app.pid;
-      vol.push(
-        h(Slider, {
-          key,
-          label: app.name + (app.muted ? ' (muted)' : ''),
-          value: ov(key, app.level),
-          onChange: (v) => {
-            panel.setOverride(key, v);
-            panel.sendThrottled(key, 'setAppVolume', { pid: app.pid, level: v });
-          },
-        }),
-      );
-    }
-    out.push(h(Section, { key: 'volume', title: 'Volume' }, vol));
 
-    // Output device.
-    if ((s.outputs || []).length > 1) {
+    const outputs = (s.outputs || []).filter((d) => d.default || !isStreamingDevice(d));
+    if (outputs.length > 1) {
+      out.push(h('div', { key: 'out-t', className: 'uc-title' }, 'Output'));
+      for (const d of outputs) {
+        out.push(
+          h(
+            Buttons,
+            { key: 'out-' + d.id },
+            h(Btn, { wide: true, left: true, on: d.default, onClick: () => !d.default && panel.act('setOutput', { id: d.id }) }, (d.default ? '✓ ' : '') + d.name),
+          ),
+        );
+      }
+    }
+
+    const apps = s.apps || [];
+    if (apps.length) {
+      out.push(h('div', { key: 'apps-t', className: 'uc-title' }, 'Apps'));
+      for (const app of apps) {
+        const key = 'app' + app.pid;
+        out.push(
+          h(Slider, {
+            key,
+            label: app.name + (app.muted ? ' (muted)' : ''),
+            value: ov(key, app.level),
+            onChange: (v) => {
+              panel.setOverride(key, v);
+              panel.sendThrottled(key, 'setAppVolume', { pid: app.pid, level: v });
+            },
+          }),
+        );
+      }
+    }
+    return out;
+  }
+
+  function windowsPage(s, panel) {
+    const armed = panel.state.armed;
+    const tasks = s.tasks || [];
+    if (tasks.length === 0) return [h('div', { key: 'none', className: 'uc-sub', style: { paddingTop: 8 } }, 'No other windows are open.')];
+    return tasks.map((t) =>
+      h(
+        'div',
+        { key: t.hwnd, className: 'uc-task' },
+        h('div', { className: 'uc-line' }, h('span', null, t.title)),
+        h('div', { className: 'uc-sub' }, t.detail),
+        h(
+          Buttons,
+          null,
+          h(Btn, { wide: true, onClick: () => panel.act('switchTo', { hwnd: t.hwnd }, closeMenus) }, 'Switch to'),
+          h(Btn, { onClick: () => panel.act('closeWindow', { hwnd: t.hwnd }) }, 'Close'),
+          h(
+            Btn,
+            {
+              danger: armed === 'kill' + t.pid,
+              onClick: () => panel.confirm('kill' + t.pid, () => panel.act('endProcess', { pid: t.pid })),
+            },
+            armed === 'kill' + t.pid ? 'Sure?' : 'End',
+          ),
+        ),
+      ),
+    );
+  }
+
+  function systemPage(s, panel) {
+    const host = s.host || {};
+    const sys = s.system || {};
+    const out = [h(Line, { key: 'mode', label: 'Mode', value: host.mode || 'Unknown' })];
+    if (host.tv) out.push(h(Line, { key: 'tv', label: 'TV', value: host.tv }));
+    if (host.gaming) {
+      const armed = panel.state.armed === 'leave';
       out.push(
         h(
-          Section,
-          { key: 'outputs', title: 'Sound output' },
-          s.outputs.map((d) =>
-            h(Action, {
-              key: d.id,
-              label: d.name,
-              button: d.default ? 'In use' : 'Use this',
-              disabled: d.default,
-              onClick: () => panel.act('setOutput', { id: d.id }),
-            }),
-          ),
+          Buttons,
+          { key: 'leave' },
+          h(Btn, { wide: true, danger: armed, onClick: () => panel.confirm('leave', () => panel.act('leaveGaming')) }, armed ? 'Press again to leave' : 'Leave gaming mode'),
         ),
       );
     }
-
-    // Windows.
-    const tasks = s.tasks || [];
     out.push(
-      h(
-        Section,
-        { key: 'tasks', title: 'Windows' },
-        tasks.length === 0
-          ? h('div', { className: 'uc-sub' }, 'No other windows are open.')
-          : tasks.map((t) =>
-              h(
-                'div',
-                { key: t.hwnd },
-                h('div', { className: 'uc-line' }, h('span', null, t.title)),
-                h('div', { className: 'uc-sub' }, t.detail),
-                h(
-                  Buttons,
-                  null,
-                  h(Btn, { wide: true, onClick: () => panel.act('switchTo', { hwnd: t.hwnd }, closeMenus) }, 'Switch to'),
-                  h(Btn, { onClick: () => panel.act('closeWindow', { hwnd: t.hwnd }) }, 'Close'),
-                  h(
-                    Btn,
-                    {
-                      danger: armed === 'kill' + t.pid,
-                      onClick: () => panel.confirm('kill' + t.pid, () => panel.act('endProcess', { pid: t.pid })),
-                    },
-                    armed === 'kill' + t.pid ? 'Sure?' : 'End',
-                  ),
-                ),
-              ),
-            ),
-      ),
-    );
-
-    // Performance.
-    const sys = s.system || {};
-    const perf = [
+      h('div', { key: 'perf-t', className: 'uc-title' }, 'Performance'),
       h(Line, { key: 'cpu', label: 'CPU', value: sys.cpu || '—' }),
       h(Line, { key: 'gpu', label: 'GPU', value: sys.gpu || '—' }),
       h(Line, { key: 'ram', label: 'Memory', value: sys.ram || '—' }),
-    ];
-    if (s.display) perf.push(h(Line, { key: 'disp', label: 'Display', value: s.display }));
-    out.push(h(Section, { key: 'perf', title: 'Performance' }, perf));
+    );
+    if (s.display) out.push(h(Line, { key: 'disp', label: 'Display', value: s.display }));
+    return out;
+  }
 
-    // Batteries.
+  function batteryPage(s, panel) {
     const bats = s.batteries;
-    const batKids = [];
-    if (bats == null) batKids.push(h('div', { key: 'scan', className: 'uc-sub' }, 'Reading devices…'));
-    else if (bats.length === 0) batKids.push(h('div', { key: 'none', className: 'uc-sub' }, 'No wireless devices with a battery.'));
+    const out = [];
+    if (bats == null) out.push(h('div', { key: 'scan', className: 'uc-sub', style: { paddingTop: 8 } }, 'Reading devices…'));
+    else if (bats.length === 0) out.push(h('div', { key: 'none', className: 'uc-sub', style: { paddingTop: 8 } }, 'No wireless devices with a battery.'));
     for (const b of bats || []) {
-      batKids.push(
+      out.push(
         h(
           'div',
           { key: b.name },
@@ -1224,9 +1271,7 @@
         ),
       );
     }
-    batKids.push(h(Buttons, { key: 'rescan' }, h(Btn, { wide: true, onClick: () => panel.act('rescanBatteries') }, 'Read again')));
-    out.push(h(Section, { key: 'bat', title: 'Batteries' }, batKids));
-
+    out.push(h(Buttons, { key: 'rescan' }, h(Btn, { wide: true, onClick: () => panel.act('rescanBatteries') }, 'Read again')));
     return out;
   }
 
@@ -1234,7 +1279,7 @@
   function TabIcon() {
     return h(
       'svg',
-      { viewBox: '0 0 24 24', width: '1em', height: '1em', fill: 'currentColor', style: { width: '100%', height: '100%' } },
+      { viewBox: '0 0 24 24', fill: 'currentColor', style: { width: '62%', height: '62%', display: 'block', margin: 'auto' } },
       h('path', {
         fillRule: 'evenodd',
         d:
