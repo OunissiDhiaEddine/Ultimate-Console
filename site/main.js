@@ -150,7 +150,7 @@
     say("Ctrl + Alt + O");
     await press("O");
     screen.dataset.mode = "overlay";
-    say("Overlay: volume, task switcher, live stats");
+    say("Steam's Quick Access Menu, on the Ultimate Console tab");
     await sleep(2600);
     await press("O");
     screen.dataset.mode = "console";
