@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Ultimate Console: turn your Windows PC into a couch console</title>
-  <meta name="description" content="One hotkey hides the Windows desktop, wakes your Android TV, switches to it and launches Steam Big Picture. The same hotkey puts everything back. Free and open source.">
+  <meta name="description" content="One hotkey hides the Windows desktop, wakes your Android TV, switches to it and launches Steam Big Picture. New in 0.2: its menu lives inside Steam's Quick Access Menu. Free and open source.">
   <meta name="theme-color" content="#0d1117">
   <meta property="og:title" content="Ultimate Console">
   <meta property="og:description" content="A console-like couch mode for Windows. One hotkey: desktop gone, TV on, Big Picture up.">
@@ -26,6 +26,7 @@
       </a>
       <nav aria-label="Main">
         <ul class="nav-links">
+          <li><a href="#new">New in 0.2</a></li>
           <li><a href="#features">Features</a></li>
           <li><a href="#how">How it works</a></li>
           <li><a href="#install">Install</a></li>
@@ -44,6 +45,7 @@
       <div class="glow glow-b" aria-hidden="true"></div>
       <div class="wrap hero-grid">
         <div class="hero-copy">
+          <a class="news reveal" href="#new"><span class="news-tag">New in 0.2</span> The menu now lives in Steam <span aria-hidden="true">→</span></a>
           <p class="eyebrow reveal">Free · Open source · Windows</p>
           <h1 class="reveal">Your PC, <span class="grad">as a couch console.</span></h1>
           <p class="lead reveal">
@@ -59,13 +61,13 @@
             <a class="btn btn-ghost btn-lg" href="#install">Install guide</a>
           </div>
           <p class="fine reveal">
-            <span id="version-label">v0.1.0</span> · 64-bit Windows · per-user install, no admin needed ·
+            <span id="version-label">v0.2.0</span> · 64-bit Windows · per-user install, no admin needed ·
             <a href="https://github.com/OunissiDhiaEddine/Ultimate-Console/releases/latest">release notes</a>
           </p>
         </div>
 
         <!-- Animated TV demo -->
-        <div class="demo reveal" aria-label="Animation: pressing Ctrl+Alt+G switches the TV from the Windows desktop to a console view">
+        <div class="demo reveal" aria-label="Animation: pressing Ctrl+Alt+G switches the TV from the Windows desktop to a console view, and Ctrl+Alt+O opens the Ultimate Console tab in Steam's Quick Access Menu">
           <div class="tv">
             <div class="screen" id="screen" data-mode="desktop">
               <div class="layer layer-off"></div>
@@ -82,10 +84,15 @@
                 </div>
               </div>
               <div class="layer layer-overlay">
-                <div class="ov-card">
-                  <div class="ov-row"><span class="ov-label">Volume</span><span class="ov-slider"><span></span></span></div>
-                  <div class="ov-grid"><span></span><span class="sel"></span><span></span></div>
-                  <div class="ov-stats"><span>CPU 34%</span><span>GPU 71%</span><span>RAM 5.2 GB</span></div>
+                <div class="qam">
+                  <div class="qam-tabs"><i></i><i></i><i></i><i class="uc"></i></div>
+                  <div class="qam-body">
+                    <div class="qam-title">Ultimate Console</div>
+                    <div class="ov-row"><span class="ov-label">Volume</span><span class="ov-slider"><span></span></span></div>
+                    <div class="qam-item">Sound output</div>
+                    <div class="qam-item sel">Windows</div>
+                    <div class="ov-stats"><span>CPU 34%</span><span>GPU 71%</span></div>
+                  </div>
                 </div>
               </div>
               <div class="toast" id="toast">Waking TV…</div>
@@ -109,7 +116,7 @@
         </div>
         <div class="hk reveal">
           <div class="keyrow"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>O</kbd></div>
-          <p><strong>Overlay</strong>Volume, task switcher and stats.</p>
+          <p><strong>Menu</strong>Opens the Ultimate Console tab in Steam.</p>
         </div>
         <div class="hk reveal">
           <div class="keyrow"><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>Shift</kbd><kbd>R</kbd></div>
@@ -117,6 +124,48 @@
         </div>
       </div>
       <p class="wrap strip-note reveal">Every shortcut can be changed in the settings app.</p>
+    </section>
+
+    <!-- NEW IN 0.2 -->
+    <section class="section" id="new">
+      <div class="wrap whatsnew">
+        <div class="whatsnew-copy">
+          <header class="section-head reveal">
+            <p class="eyebrow">New in 0.2</p>
+            <h2>The menu now lives inside Steam.</h2>
+            <p class="sub">In Big Picture, press <strong>Steam + A</strong> (or the <strong>…</strong> button) and pick the <strong>Ultimate Console</strong> tab, the controller icon right after the gear. It sits in Steam's own Quick Access Menu, so it looks and moves like the rest of Big Picture, and it's there in the in-game overlay too.</p>
+          </header>
+          <ul class="ticks reveal">
+            <li><strong>Console</strong>: the mode, the TV's state and <em>Leave gaming mode</em>.</li>
+            <li><strong>Volume</strong>: master volume, mute and a slider for each app.</li>
+            <li><strong>Sound output</strong>: make another device the default.</li>
+            <li><strong>Windows</strong>: every open window, with <em>Switch to</em>, <em>Close</em> and <em>End</em>. Handy for apps that weren't started from Steam.</li>
+            <li><strong>Performance</strong>: CPU, GPU, memory and the display mode.</li>
+            <li><strong>Batteries</strong>: controllers, headsets and mice.</li>
+          </ul>
+          <div class="upgrade reveal">
+            <h3>Updating from 0.1?</h3>
+            <p>Your install updates itself and keeps its settings, TV pairing and hotkeys. Then <strong>restart Steam once</strong> (<em>Steam → Exit</em>, then start it) so it opens the port the tab needs. The settings app's <strong>Steam</strong> page shows when the tab is ready.</p>
+          </div>
+        </div>
+
+        <div class="qam-shot reveal" aria-hidden="true">
+          <div class="qs-tabs"><i></i><i></i><i></i><i></i><i class="uc"></i></div>
+          <div class="qs-body">
+            <div class="qs-title">Ultimate Console</div>
+            <div class="qs-group">Console</div>
+            <div class="qs-row"><span>Gaming mode</span><span class="qs-val">TV on</span></div>
+            <div class="qs-group">Volume</div>
+            <div class="qs-row qs-slider"><span>Master</span><b style="--v: 68%"></b></div>
+            <div class="qs-row qs-slider"><span>Game</span><b style="--v: 82%"></b></div>
+            <div class="qs-row qs-slider"><span>Discord</span><b style="--v: 40%"></b></div>
+            <div class="qs-group">Windows</div>
+            <div class="qs-row qs-sel"><span>Browser</span><span class="qs-val">Switch to</span></div>
+            <div class="qs-group">Performance</div>
+            <div class="qs-row"><span>CPU 34% · GPU 71%</span><span class="qs-val">165 Hz</span></div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- FEATURES -->
@@ -146,8 +195,8 @@
           </article>
           <article class="card reveal">
             <div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 17.5h7M17.5 14v7"/></svg></div>
-            <h3>Built-in overlay</h3>
-            <p>Master and per-app volume, a task switcher with live window thumbnails, and CPU, GPU and RAM for the selected game. Works with a controller.</p>
+            <h3>A menu inside Steam</h3>
+            <p>An Ultimate Console tab in Big Picture's Quick Access Menu: per-app volume, sound output, open windows, performance and batteries, all with the controller. A full-screen overlay is still there over other apps.</p>
           </article>
           <article class="card reveal">
             <div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
@@ -190,7 +239,7 @@
           <li class="reveal"><span class="t-num">2</span><div><h3>The TV wakes up</h3><p>A Wake-on-LAN packet and an ADB wake command go to the TV. The app waits until Windows actually sees the TV before switching.</p></div></li>
           <li class="reveal"><span class="t-num">3</span><div><h3>The TV becomes the only screen</h3><p>Other monitors turn off and the TV becomes primary, with your chosen mode and HDR. Sound can move to the TV too.</p></div></li>
           <li class="reveal"><span class="t-num">4</span><div><h3>The desktop steps aside</h3><p>Explorer closes cleanly, without signing you out and without admin rights. No taskbar, no pop-ups.</p></div></li>
-          <li class="reveal"><span class="t-num">5</span><div><h3>Big Picture takes over</h3><p>Steam opens in Big Picture mode as your console dashboard. Grab the controller.</p></div></li>
+          <li class="reveal"><span class="t-num">5</span><div><h3>Big Picture takes over</h3><p>Steam opens in Big Picture mode as your console dashboard, with the Ultimate Console tab waiting under <strong>Steam + A</strong>. Grab the controller.</p></div></li>
           <li class="reveal t-exit"><span class="t-num">↩</span><div><h3>Leaving is just as easy</h3><p>Exit Big Picture or press the hotkey again: the monitors, sound device and Explorer come back exactly as they were, and the TV turns off.</p></div></li>
         </ol>
       </div>
@@ -257,6 +306,7 @@
             <li><a href="https://store.steampowered.com/about/">Steam</a> installed</li>
             <li>A TV connected by HDMI</li>
             <li>For wake and sleep: an Android TV on the same network</li>
+            <li>For the Steam tab: restart Steam once after installing</li>
           </ul>
         </div>
       </div>
@@ -276,6 +326,7 @@
           <button role="tab" aria-selected="false" aria-controls="tab-tv" id="t-tv" tabindex="-1">TV</button>
           <button role="tab" aria-selected="false" aria-controls="tab-audio" id="t-audio" tabindex="-1">Audio</button>
           <button role="tab" aria-selected="false" aria-controls="tab-hotkeys" id="t-hotkeys" tabindex="-1">Hotkeys</button>
+          <button role="tab" aria-selected="false" aria-controls="tab-steam" id="t-steam" tabindex="-1">Steam</button>
           <button role="tab" aria-selected="false" aria-controls="tab-controller" id="t-controller" tabindex="-1">Controller</button>
         </div>
 
@@ -309,17 +360,25 @@
           </div>
           <div class="panel" role="tabpanel" id="tab-hotkeys" aria-labelledby="t-hotkeys" hidden>
             <ol>
-              <li>The <strong>Hotkeys</strong> page lists gaming mode, overlay and panic restore.</li>
+              <li>The <strong>Hotkeys</strong> page lists gaming mode, the menu and panic restore.</li>
               <li>Press <strong>Record</strong> and type the new shortcut. <kbd>Esc</kbd> cancels.</li>
               <li>The app checks it on the spot: shortcuts reserved by Windows, already used by another program, the same as another hotkey, or that type a character with AltGr are flagged.</li>
               <li><strong>Reset</strong> brings back the default. Press <strong>Save</strong> when everything says OK.</li>
             </ol>
           </div>
+          <div class="panel" role="tabpanel" id="tab-steam" aria-labelledby="t-steam" hidden>
+            <ol>
+              <li>After installing or updating, <strong>restart Steam once</strong> (<em>Steam → Exit</em>, then start it). The agent turns on Steam's local DevTools port, the same switch Decky Loader and Millennium use, and Steam only reads it at start.</li>
+              <li>The settings app's <strong>Steam</strong> page shows the tab's status. It should say <strong>Ready</strong> once Big Picture is open.</li>
+              <li>In Big Picture press <strong>Steam + A</strong> and pick the controller icon, right after the gear.</li>
+              <li>Already use Decky or Millennium? Untick <strong>Turn on Steam's DevTools port</strong> and let them manage it. Don't want the tab at all? Untick it and the hotkey opens the full-screen overlay again.</li>
+            </ol>
+          </div>
           <div class="panel" role="tabpanel" id="tab-controller" aria-labelledby="t-controller" hidden>
             <ol>
-              <li>In Steam open <em>Settings → Controller → Guide Button Chord Layout</em>.</li>
-              <li>Add a chord you like (for example <strong>Guide + Y</strong>) that sends the keyboard shortcut <kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>O</kbd>.</li>
-              <li>Now the overlay opens from the couch. Navigate it with the stick or D-pad, no keyboard needed.</li>
+              <li>In Big Picture nothing to set up: <strong>Steam + A</strong> opens the Quick Access Menu, and the Ultimate Console tab is in it.</li>
+              <li>Want the full-screen overlay from the couch over other apps too? In Steam open <em>Settings → Controller → Guide Button Chord Layout</em>.</li>
+              <li>Add a chord you like (for example <strong>Guide + Y</strong>) that sends <kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>O</kbd>. It opens the Steam tab when Big Picture is in front, and the overlay anywhere else.</li>
             </ol>
           </div>
         </div>
@@ -367,8 +426,12 @@
             <p><em>Settings → Apps → Installed apps → Ultimate Console → Uninstall</em>, or the <strong>Uninstall</strong> button in the settings app. It restores the desktop if needed and deletes everything it created.</p>
           </details>
           <details class="reveal">
+            <summary>The Ultimate Console tab isn't in Steam</summary>
+            <p>Restart Steam once (<em>Steam → Exit</em>, then start it) and check the settings app's <strong>Steam</strong> page. Steam's interface changes with Steam updates; if the tab ever stops showing, the hotkey still opens the full-screen overlay while an update catches up.</p>
+          </details>
+          <details class="reveal">
             <summary>The overlay doesn't show over my game</summary>
-            <p>Overlays can't draw over <em>exclusive fullscreen</em>. Switch the game to borderless or windowed fullscreen (most modern games already are). Games running as administrator also can't be controlled from the overlay.</p>
+            <p>Use the Steam tab instead: it's part of Steam's in-game overlay, so press <strong>Steam + A</strong> in a Steam game. The separate full-screen overlay can't draw over <em>exclusive fullscreen</em>; switch the game to borderless or windowed fullscreen (most modern games already are). Games running as administrator also can't be controlled from it.</p>
           </details>
           <details class="reveal">
             <summary>Where are the settings and logs?</summary>
