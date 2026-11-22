@@ -31,6 +31,7 @@ pub struct Config {
     pub steam: Steam,
     pub power: Power,
     pub overlay: Overlay,
+    pub steam_menu: SteamMenu,
     pub cursor: Cursor,
     pub updates: Updates,
 }
@@ -47,6 +48,7 @@ impl Default for Config {
             steam: Steam::default(),
             power: Power::default(),
             overlay: Overlay::default(),
+            steam_menu: SteamMenu::default(),
             cursor: Cursor::default(),
             updates: Updates::default(),
         }
@@ -291,6 +293,11 @@ pub struct Overlay {
     /// In gaming mode, handle the keyboard / headset volume keys (Explorer,
     /// which normally does, isn't running) and show a volume popup.
     pub volume_keys: bool,
+    /// The overlay hotkey opens the old full-screen overlay instead of the
+    /// Ultimate Console tab in Steam's Quick Access Menu. The hotkey falls
+    /// back to the full-screen overlay anyway while the Steam tab isn't
+    /// available.
+    pub native_menu: bool,
 }
 
 impl Default for Overlay {
@@ -299,6 +306,35 @@ impl Default for Overlay {
             in_desktop_mode: false,
             sample_interval_ms: 1000,
             volume_keys: true,
+            native_menu: false,
+        }
+    }
+}
+
+/// The Ultimate Console tab in Big Picture's Quick Access Menu (Steam + A),
+/// which replaces the full-screen overlay. The agent talks to Steam's UI over
+/// the Chromium DevTools port Steam opens when the
+/// `.cef-enable-remote-debugging` file is in its folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SteamMenu {
+    /// Add the tab to the Quick Access Menu.
+    pub enabled: bool,
+    /// Create `.cef-enable-remote-debugging` in Steam's folder (and remove
+    /// it again when this is turned off or on uninstall, if the agent made
+    /// it). Steam reads it when it starts, so it needs one Steam restart.
+    /// Turn off if Millennium, Decky or similar already manage it.
+    pub manage_debug_file: bool,
+    /// Steam's DevTools port (Steam always uses 8080).
+    pub port: u16,
+}
+
+impl Default for SteamMenu {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            manage_debug_file: true,
+            port: 8080,
         }
     }
 }
@@ -322,6 +358,14 @@ impl Default for Cursor {
     }
 }
 
+/// Where updates come from.
+pub const UPDATE_REPO: &str = "OunissiDhiaEddine/Ultimate-Console";
+
+/// The repo of the Steam-menu test builds (0.1.18 to 0.1.23), since merged
+/// into this project and deleted. Configs that still name it are moved to
+/// [`UPDATE_REPO`] when loaded, so those installs keep getting updates.
+pub const TEST_BUILDS_REPO: &str = "OunissiDhiaEddine/UC-SteamUI";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Updates {
@@ -334,7 +378,7 @@ impl Default for Updates {
     fn default() -> Self {
         Self {
             auto_check: true,
-            repo: "OunissiDhiaEddine/Ultimate-Console".into(),
+            repo: UPDATE_REPO.into(),
         }
     }
 }
@@ -368,6 +412,15 @@ impl Config {
     /// Brings an older schema up to [`SCHEMA_VERSION`]. Nothing to do yet.
     fn migrate(mut self) -> Self {
         self.schema = SCHEMA_VERSION;
+        if self
+            .updates
+            .repo
+            .trim()
+            .trim_matches('/')
+            .eq_ignore_ascii_case(TEST_BUILDS_REPO)
+        {
+            self.updates.repo = UPDATE_REPO.into();
+        }
         self
     }
 
@@ -411,6 +464,9 @@ impl Config {
         }
         if self.tv.adb_port == 0 {
             problems.push("tv.adb_port must be > 0".into());
+        }
+        if self.steam_menu.port == 0 {
+            problems.push("steam_menu.port must be > 0".into());
         }
         if self.tv.wol_port == 0 {
             problems.push("tv.wol_port must be > 0".into());
@@ -560,6 +616,17 @@ mod tests {
         c.validate().unwrap();
         let back = Config::from_toml(&c.to_toml().unwrap(), path()).unwrap();
         assert_eq!(back, c);
+    }
+
+    #[test]
+    fn test_builds_repo_moves_back_to_this_one() {
+        assert_eq!(Config::default().updates.repo, UPDATE_REPO);
+        let old = format!("[updates]\nrepo = \"{TEST_BUILDS_REPO}\"");
+        let c = Config::from_toml(&old, path()).unwrap();
+        assert_eq!(c.updates.repo, UPDATE_REPO);
+        // A repo the user picked on purpose stays.
+        let mine = Config::from_toml("[updates]\nrepo = \"someone/else\"", path()).unwrap();
+        assert_eq!(mine.updates.repo, "someone/else");
     }
 
     #[test]

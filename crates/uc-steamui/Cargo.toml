@@ -1,0 +1,32 @@
+[package]
+name = "uc-steamui"
+description = "Ultimate Console tab in Steam Big Picture's Quick Access Menu, injected over Steam's CEF DevTools port."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+uc-core.workspace = true
+uc-audio.workspace = true
+uc-sysinfo.workspace = true
+uc-battery.workspace = true
+uc-overlay.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tungstenite.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

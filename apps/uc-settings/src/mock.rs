@@ -53,6 +53,7 @@ impl MockAgent {
             tv: s.tv,
             update_token_set: false,
             last_error: None,
+            steam_menu: Some("Ready in Big Picture (mock)".into()),
         }
     }
 

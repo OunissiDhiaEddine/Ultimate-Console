@@ -25,19 +25,24 @@ pub struct Removed {
 /// folder. Keeps going after errors (e.g. a log file still open) and reports
 /// each entry.
 pub fn remove_app_data(paths: &Paths) -> Vec<Removed> {
-    let mut report: Vec<Removed> = paths
-        .uninstall_manifest()
-        .into_iter()
+    // Steam's DevTools switch lives in Steam's folder, not ours; the marker
+    // says where, and is itself removed with the rest below.
+    let mut report: Vec<Removed> = steam_debug_file(paths)
         .map(|path| {
             let result = remove(&path);
-            match &result {
-                Ok(true) => tracing::info!(path = %path.display(), "removed"),
-                Ok(false) => {}
-                Err(e) => tracing::warn!(path = %path.display(), "could not remove: {e}"),
-            }
             Removed { path, result }
         })
+        .into_iter()
         .collect();
+    report.extend(paths.uninstall_manifest().into_iter().map(|path| {
+        let result = remove(&path);
+        match &result {
+            Ok(true) => tracing::info!(path = %path.display(), "removed"),
+            Ok(false) => {}
+            Err(e) => tracing::warn!(path = %path.display(), "could not remove: {e}"),
+        }
+        Removed { path, result }
+    }));
     // Only when empty: in an installed copy Velopack's files live here too.
     let data = paths.data_dir.clone();
     if fs::read_dir(&data).is_ok_and(|mut d| d.next().is_none()) {
@@ -45,6 +50,15 @@ pub fn remove_app_data(paths: &Paths) -> Vec<Removed> {
         report.push(Removed { path: data, result });
     }
     report
+}
+
+/// The `.cef-enable-remote-debugging` file the agent created in Steam's
+/// folder, if it did (see `Paths::steam_debug_marker_file`). Anything else
+/// in the marker is ignored, so a damaged marker can't delete other files.
+fn steam_debug_file(paths: &Paths) -> Option<PathBuf> {
+    let text = fs::read_to_string(paths.steam_debug_marker_file()).ok()?;
+    let path = PathBuf::from(text.trim());
+    (path.file_name()? == ".cef-enable-remote-debugging").then_some(path)
 }
 
 fn remove(path: &Path) -> std::io::Result<bool> {

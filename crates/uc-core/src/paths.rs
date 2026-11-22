@@ -69,6 +69,13 @@ impl Paths {
         self.data_dir.join("logs")
     }
 
+    /// Written when the agent creates Steam's `.cef-enable-remote-debugging`
+    /// file; holds that file's path so it can be removed again (when the
+    /// Steam menu is turned off, and on uninstall).
+    pub fn steam_debug_marker_file(&self) -> PathBuf {
+        self.data_dir.join("steam-debug-file.txt")
+    }
+
     /// Every app-owned location, for the uninstaller and its CI check
     /// (plan §2.12). Velopack's own folders are not listed: Velopack removes them.
     pub fn uninstall_manifest(&self) -> Vec<PathBuf> {
@@ -77,6 +84,7 @@ impl Paths {
             self.state_file(),
             self.adb_key_file(),
             self.update_token_file(),
+            self.steam_debug_marker_file(),
             self.logs_dir(),
             self.config_dir.clone(),
         ]

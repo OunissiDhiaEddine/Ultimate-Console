@@ -147,6 +147,12 @@ impl std::fmt::Debug for Backends {
 #[cfg(windows)]
 pub use win::Overlay;
 
+/// The overlay's Win32 helpers that aren't drawing (task list, switching to,
+/// closing and ending tasks, display mode), shared with `uc-steamui`, whose
+/// Quick Access Menu tab offers the same actions.
+#[cfg(windows)]
+pub use win::system as desktop;
+
 /// Stand-in on other platforms: [`Overlay::start`] always fails.
 #[cfg(not(windows))]
 #[derive(Debug)]

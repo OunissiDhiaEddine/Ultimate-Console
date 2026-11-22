@@ -3,7 +3,7 @@
 mod keyhook;
 mod osd;
 mod render;
-mod system;
+pub mod system;
 mod thumbs;
 
 use std::cell::RefCell;

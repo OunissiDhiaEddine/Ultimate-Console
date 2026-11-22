@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "apps/*"]
 
 [workspace.package]
-version = "0.1.17"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -22,6 +22,7 @@ uc-sysinfo = { path = "crates/uc-sysinfo" }
 uc-overlay = { path = "crates/uc-overlay" }
 uc-update = { path = "crates/uc-update" }
 uc-battery = { path = "crates/uc-battery" }
+uc-steamui = { path = "crates/uc-steamui" }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -36,6 +37,9 @@ tempfile = "3"
 rsa = { version = "0.9", features = ["getrandom"] }
 sha1 = { version = "0.10", features = ["oid"] }
 socket2 = "0.6"
+# uc-steamui: WebSocket client for Steam's CEF DevTools port (localhost
+# only, so no TLS).
+tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 # uc-tv: AES-128 for the Broadlink RM4 local protocol (IR power packet).
 aes = "0.8"
 # uc-update: Velopack installer/updater runtime (hooks, GitHub Releases source).

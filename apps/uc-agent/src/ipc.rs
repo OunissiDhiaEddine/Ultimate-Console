@@ -41,6 +41,7 @@ use crate::hotkeys;
 use crate::platform::{SharedTv, tv_power_state};
 use crate::service::Command;
 use crate::shared::Shared;
+use crate::steam_menu::SteamMenuHost;
 use crate::updates::Updates;
 use crate::window::WindowHandle;
 
@@ -63,6 +64,7 @@ pub struct Handler {
     pub commands: Sender<Command>,
     pub window: WindowHandle,
     pub updates: Arc<Updates>,
+    pub steam_menu: Arc<SteamMenuHost>,
 }
 
 impl Handler {
@@ -84,6 +86,7 @@ impl Handler {
                     tv: s.tv,
                     update_token_set: false,
                     last_error: s.last_error,
+                    steam_menu: Some(self.steam_menu.status_text()),
                 })
             }
             Q::GetConfig => IpcResponse::Config {

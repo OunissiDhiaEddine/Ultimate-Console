@@ -197,6 +197,11 @@ pub struct AgentStatus {
     pub update_token_set: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// One line about the Ultimate Console tab in Steam's Quick Access Menu
+    /// ("Ready in Big Picture", "Restart Steam once to turn it on" …).
+    /// `None` from agents older than 0.2.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steam_menu: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
@@ -345,6 +350,7 @@ mod tests {
                 tv: TvPowerState::Awake,
                 update_token_set: false,
                 last_error: Some("x".into()),
+                steam_menu: Some("Ready".into()),
             }),
             IpcResponse::Config {
                 config: Box::default(),

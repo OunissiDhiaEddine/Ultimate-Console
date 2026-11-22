@@ -36,6 +36,11 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+      # The Quick Access Menu script against a fake Steam (React, webpack,
+      # fibers). Node is preinstalled on the runner.
+      - name: Test Steam menu script
+        run: node crates/uc-steamui/js/menu.test.js
+
       - name: Build release
         run: cargo build --workspace --release --locked
 

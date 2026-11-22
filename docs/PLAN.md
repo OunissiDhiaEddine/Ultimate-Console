@@ -302,6 +302,49 @@ settings app when recording a new shortcut:
 For the controller: map a Steam Input chord (e.g. Guide+Y) to the overlay
 hotkey; the settings app shows how.
 
+### 2.14 The menu inside Steam (Quick Access Menu tab, WP-12)
+
+Since 0.2.0 the agent's menu is an **Ultimate Console tab in Big
+Picture's Quick Access Menu** (Steam + A, also in Steam's in-game overlay)
+rather than the full-screen overlay of §2.9. The controller already works
+there, it looks like the rest of Big Picture, and nothing has to draw over
+games. Crate `uc-steamui`; agent glue in `apps/uc-agent/src/steam_menu.rs`.
+
+- **Way in:** Steam's UI is CEF. An empty `.cef-enable-remote-debugging` in
+  Steam's folder makes Steam serve the Chrome DevTools Protocol on
+  `127.0.0.1:8080` at startup (the same switch Decky Loader and Millennium
+  use). The agent creates it when `steam_menu.manage_debug_file` is on,
+  records that in `steam-debug-file.txt`, and removes it again when the tab
+  is turned off or on uninstall, never a file someone else made. Steam reads
+  it at startup: **one Steam restart** the first time.
+- **Injection:** one bridge thread polls `/json` (every 5 s while nothing
+  listens), opens the `SharedJSContext` target's WebSocket, calls
+  `Runtime.enable` + `Runtime.addBinding`, and evaluates `js/menu.js`. The
+  script finds webpack's module cache (`webpackChunksteamui`) and React
+  (`SP_REACT`), wraps the render of the memo'd component whose source
+  mentions `QuickAccessMenuBrowserView`, and appends a tab
+  (`{key, title, tab, panel}`) to the `tabs` array it finds one or two
+  levels down. Mounted instances are switched over through their fibers.
+  Fallback: any mounted component that renders a QAM-like `tabs` array.
+  Steam's `SliderField`/`ToggleField`/`ButtonItem`/`Field`/`Focusable` are
+  found by marker strings; without them the panel uses simpler stand-ins.
+- **Calls back:** the panel calls `window.<binding>(json)` →
+  `Runtime.bindingCalled` → `uc_steamui::Handler` on the bridge thread →
+  `window.__uc.reply(...)`. No extra port, no HTTP server in the agent.
+  Window actions only target windows in the current task list.
+- **Staying in:** Steam reloads its UI (leaving Big Picture, updates):
+  context events and a 10 s health check re-inject. The script is
+  idempotent per agent version and `dispose()`s an older one.
+- **Hotkey:** with Big Picture in front, the overlay hotkey opens the Quick
+  Access Menu on our tab; otherwise (a game or app in front, tab not
+  available, or `overlay.native_menu`) it opens the full-screen overlay.
+  The volume popup (§2.9) is unchanged.
+- **Risks:** Steam's internals are not an API. Marker strings and the
+  QAM structure can change with a Steam update; the fallbacks, the
+  full-screen overlay and `uc-probe steam-menu` exist for that. While the
+  port is open any local program can drive Steam's UI; documented in the
+  README and the settings app.
+
 ---
 
 ## 3. Process & module architecture
@@ -473,6 +516,14 @@ on the real PC. "Interfaces" lists what other packages may rely on.
 - Optional: code signing (self-signed is fine for personal use; SmartScreen
   will warn on unsigned).
 - Depends on: WP-00; final packaging needs WP-08/09. Size: M.
+
+### WP-12 · Steam Quick Access Menu tab (`uc-steamui`)
+- See §2.14. Config `[steam_menu]` (`enabled`, `manage_debug_file`,
+  `port`) and `overlay.native_menu`; status line in `AgentStatus`.
+- Probe: `uc-probe steam-menu targets | run [--open] | eval <js> | switch on|off`.
+- Tests: Rust unit tests, an end-to-end bridge test against a fake DevTools
+  server, and `js/menu.test.js` (Node, in CI) against a fake Steam.
+- Checklist: `docs/tests/WP-12.md`.
 
 ### WP-11 · (Stretch) Hardening & extras
 - `uiAccess` signed build so the overlay works over elevated windows.
