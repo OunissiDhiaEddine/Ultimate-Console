@@ -533,6 +533,8 @@
       if (!['key', 'tab', 'title', 'strTitle', 'panel'].includes(k)) tab[k] = template[k];
     }
     return Object.assign(tab, {
+      // Which script made it: a newer one replaces it (see injectInto).
+      __ucVersion: VERSION,
       key: TAB_KEY,
       title: TITLE,
       strTitle: TITLE,
@@ -557,7 +559,8 @@
    * puts the copy in place, if it can).
    */
   function injectInto(tabs, visible) {
-    if (tabs.some((t) => t && t.key === TAB_KEY)) return tabs;
+    const old = tabs.findIndex((t) => t && t.key === TAB_KEY);
+    if (old >= 0 && tabs[old].__ucVersion === VERSION) return tabs;
     for (const t of tabs) {
       learnElement(t && t.panel);
       learnElement(t && t.tab);
@@ -568,10 +571,12 @@
       return null;
     }
     const tab = makeTab(tabs, visible);
-    const at = placeAfterSettings(tabs);
-    if (Object.isFrozen(tabs)) return tabs.slice(0, at).concat([tab], tabs.slice(at));
-    tabs.splice(at, 0, tab);
-    return tabs;
+    // A tab left by an older script (before an update) goes: its panel
+    // belongs to code that no longer answers.
+    const list = Object.isFrozen(tabs) ? tabs.slice() : tabs;
+    if (old >= 0) list.splice(old, 1);
+    list.splice(placeAfterSettings(list), 0, tab);
+    return list;
   }
 
   function markShown(where) {
@@ -727,6 +732,7 @@
    * list on screen now, and wrap the component that renders the holder so
    * every later render gets it too.
    */
+  const liveLists = new WeakSet();
   function patchHolders(holders) {
     let any = false;
     for (const f of holders) {
@@ -736,6 +742,15 @@
         if (tabs === props.tabs) {
           any = true;
           markShown('tabs list');
+          // On dispose (an update replacing this script), take our tab out
+          // of the list on screen again.
+          if (!liveLists.has(tabs)) {
+            liveLists.add(tabs);
+            uc.undo.push(() => {
+              const i = tabs.findIndex((t) => t && t.key === TAB_KEY && t.__ucVersion === VERSION);
+              if (i >= 0) tabs.splice(i, 1);
+            });
+          }
         }
       }
       try {
@@ -782,7 +797,7 @@
           uc.how = 'QuickAccessMenu component';
         }
       }
-      const lacking = holders.filter((f) => !f.memoizedProps.tabs.some((t) => t && t.key === TAB_KEY));
+      const lacking = holders.filter((f) => !f.memoizedProps.tabs.some((t) => t && t.key === TAB_KEY && t.__ucVersion === VERSION));
       if (lacking.length && patchHolders(lacking)) {
         if (!hookedBy) hookedBy = 'fiber';
         if (!uc.how) uc.how = 'tabs list';

@@ -119,8 +119,8 @@ function install(env) {
   if (env.popups) window.g_PopupManager = { m_mapPopups: new Map(Object.entries(env.popups).map(([k, d]) => [k, { m_popup: { document: d } }])) };
 }
 
-function inject() {
-  const script = source.replace(/__UC_VERSION__/g, 'test').replace(/__UC_BINDING__/g, 'ucSteamMenuSend');
+function inject(version) {
+  const script = source.replace(/__UC_VERSION__/g, version || 'test').replace(/__UC_BINDING__/g, 'ucSteamMenuSend');
   // eslint-disable-next-line no-eval
   return (0, eval)(script);
 }
@@ -432,6 +432,22 @@ function fiberTests() {
     check(live.filter((t) => t.key === 7331).length === 1, 'jPi/kPi: still once after more looks');
     window.__uc.dispose();
     check(creatorFiber.type === Creator && jpiFiber.type === JPi, 'jPi/kPi: dispose restores both');
+    check(!live.some((t) => t.key === 7331), 'jPi/kPi: dispose takes the tab out of the list on screen');
+
+    // An update: an older script's tab is in the list, and that script's
+    // dispose never took it out (0.1.21 didn't). The new one replaces it.
+    install({ modern: true, popups: { 'SP BPM_uid0': docWith(browserFiber.child) } });
+    const stale = { key: 7331, title: 'Ultimate Console', panel: h19('div'), tab: h19('svg'), __ucVersion: undefined };
+    live.push(stale);
+    inject('newer');
+    const now = live.filter((t) => t.key === 7331);
+    check(now.length === 1 && now[0] !== stale && now[0].__ucVersion === 'newer', "update: the old script's tab is replaced");
+    check(live.map((t) => t.key).join(',') === '0,3,4,7331,5,7,6', 'update: the new tab sits after the gear');
+    // And the next version replaces this one, through the agent's re-inject.
+    inject('newest');
+    const later = live.filter((t) => t.key === 7331);
+    check(later.length === 1 && later[0].__ucVersion === 'newest', 'update: each newer version replaces the tab');
+    window.__uc.dispose();
   }
 
   // --------------------------- 5: nothing there yet (Steam still loading)
