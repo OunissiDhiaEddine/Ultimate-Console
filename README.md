@@ -1,42 +1,32 @@
 <p align="center"><img src="packaging/brand/logo.svg" alt="Ultimate Console logo" width="96" height="96"></p>
 
-# UC-SteamUI
+# Ultimate Console
 
-**Ultimate Console with its menu inside Steam.** A fork of
-[Ultimate-Console](https://github.com/OunissiDhiaEddine/Ultimate-Console)
-that moves the menu (volume, sound output, windows, performance, batteries,
-leaving gaming mode) into an **Ultimate Console tab in Big Picture's Quick
-Access Menu** (Steam + A), instead of a separate full-screen overlay.
+A lightweight Windows background agent that turns the PC into a couch console,
+GameScope-style. One hotkey hides the Explorer shell (no sign-out), wakes the
+Android TV, switches output to it and launches Steam Big Picture as the shell.
+Leaving Big Picture (or the same hotkey) puts the desktop, the monitors and
+the TV back the way they were.
 
-Everything else is Ultimate Console as before: a lightweight Windows
-background agent that turns the PC into a couch console, GameScope-style. One
-hotkey hides the Explorer shell (no sign-out), wakes the Android TV, switches
-output to it and launches Steam Big Picture as the shell. Leaving Big Picture
-(or the same hotkey) puts the desktop, the monitors and the TV back the way
-they were.
-
-Status: **early.** The console mode is Ultimate Console's, used daily. The
-Steam tab is new and still being tried on the real PC
-([checklist](docs/tests/WP-12.md)); a Steam update can break it, in which
-case the hotkey falls back to the full-screen overlay.
+Since 0.2 its menu lives **inside Steam**: an Ultimate Console tab in Big
+Picture's Quick Access Menu (Steam + A) with volume, sound output, windows,
+performance, batteries and *Leave gaming mode*, all with the controller
+([details](#the-menu-in-steam-steam--a)).
 
 ## Install
 
 1. Download **UltimateConsole-win-Setup.exe** from the
-   [latest release](https://github.com/OunissiDhiaEddine/UC-SteamUI/releases/latest)
+   [latest release](https://github.com/OunissiDhiaEddine/Ultimate-Console/releases/latest)
    and run it. No admin needed. SmartScreen may warn because it isn't
-   code-signed: *More info → Run anyway*.
-   - Already have Ultimate Console? This installs over it as an update and
-     keeps your settings, TV pairing and hotkeys.
+   code-signed: *More info → Run anyway*. An existing install is updated in
+   place and keeps its settings, TV pairing and hotkeys.
 2. **Restart Steam once** (*Steam → Exit*, then start it), so it opens the
-   port the tab needs (see [below](#the-menu-in-steam-steam--a)).
-3. Open Big Picture, press **Steam + A** and pick the controller icon. The
-   settings app's *Steam* page shows whether the tab is ready.
+   port the Steam tab needs.
+3. Open Big Picture, press **Steam + A** and pick the controller icon (right
+   after the gear). The settings app's *Steam* page shows whether the tab is
+   ready.
 
-Updates come from this repo's releases, checked daily and installed in
-desktop mode. To go back to plain Ultimate Console, install its Setup.exe and
-set `updates.repo` back to `OunissiDhiaEddine/Ultimate-Console` in
-`config.toml` (otherwise it updates from here again).
+Updates are checked daily and installed in desktop mode, never during a game.
 
 ## What's in the box
 
@@ -154,10 +144,8 @@ Set `UC_HOME=C:\some\folder` to make every binary use that folder instead of
 
 ## Docs
 
-- Setup guide (TV, display, hotkeys) on the original project's website:
-  https://ounissidhiaeddine.github.io/Ultimate-Console/ (source in `site/`).
-  Its download buttons point at the original project; for this fork use the
-  [releases here](https://github.com/OunissiDhiaEddine/UC-SteamUI/releases).
+- Website (install and setup guide): https://ounissidhiaeddine.github.io/Ultimate-Console/
+  (source in `site/`, deployed by `.github/workflows/pages.yml`).
 - `docs/PLAN.md`: architecture, decisions and work packages; §2.14 is the
   Steam tab.
 - `docs/tests/`: short manual test checklists, one per work package.

@@ -199,7 +199,7 @@ pub struct AgentStatus {
     pub last_error: Option<String>,
     /// One line about the Ultimate Console tab in Steam's Quick Access Menu
     /// ("Ready in Big Picture", "Restart Steam once to turn it on" …).
-    /// `None` from agents older than 0.1.18.
+    /// `None` from agents older than 0.2.0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steam_menu: Option<String>,
 }

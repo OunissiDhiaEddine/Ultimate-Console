@@ -358,14 +358,13 @@ impl Default for Cursor {
     }
 }
 
-/// Where updates come from: this fork, which has the Steam Quick Access Menu
-/// tab.
-pub const UPDATE_REPO: &str = "OunissiDhiaEddine/UC-SteamUI";
+/// Where updates come from.
+pub const UPDATE_REPO: &str = "OunissiDhiaEddine/Ultimate-Console";
 
-/// The original project's repo, the default before the fork. Configs that
-/// still name it are moved to [`UPDATE_REPO`] when loaded, so an install of
-/// this build isn't "updated" back to a build without the Steam tab.
-pub const ORIGINAL_UPDATE_REPO: &str = "OunissiDhiaEddine/Ultimate-Console";
+/// The repo of the Steam-menu test builds (0.1.18 to 0.1.23), since merged
+/// into this project and deleted. Configs that still name it are moved to
+/// [`UPDATE_REPO`] when loaded, so those installs keep getting updates.
+pub const TEST_BUILDS_REPO: &str = "OunissiDhiaEddine/UC-SteamUI";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -418,7 +417,7 @@ impl Config {
             .repo
             .trim()
             .trim_matches('/')
-            .eq_ignore_ascii_case(ORIGINAL_UPDATE_REPO)
+            .eq_ignore_ascii_case(TEST_BUILDS_REPO)
         {
             self.updates.repo = UPDATE_REPO.into();
         }
@@ -620,9 +619,9 @@ mod tests {
     }
 
     #[test]
-    fn original_update_repo_moves_to_the_fork() {
+    fn test_builds_repo_moves_back_to_this_one() {
         assert_eq!(Config::default().updates.repo, UPDATE_REPO);
-        let old = format!("[updates]\nrepo = \"{ORIGINAL_UPDATE_REPO}\"");
+        let old = format!("[updates]\nrepo = \"{TEST_BUILDS_REPO}\"");
         let c = Config::from_toml(&old, path()).unwrap();
         assert_eq!(c.updates.repo, UPDATE_REPO);
         // A repo the user picked on purpose stays.

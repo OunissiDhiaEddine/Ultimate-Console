@@ -13,7 +13,7 @@
 Hotkeys (change them in settings): **Ctrl+Alt+G** gaming mode,
 **Ctrl+Alt+O** menu, **Ctrl+Alt+Shift+R** panic restore.
 
-New in 0.1.18: the menu lives in Steam. In Big Picture press **Steam + A**
+New in 0.2: the menu lives in Steam. In Big Picture press **Steam + A**
 (or the **…** button) and pick the **Ultimate Console** tab for volume, sound
 output, windows, performance, batteries and *Leave gaming mode*, all with the
 controller. **Restart Steam once** after updating so it opens the port the

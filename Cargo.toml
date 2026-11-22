@@ -3,11 +3,11 @@ resolver = "3"
 members = ["crates/*", "apps/*"]
 
 [workspace.package]
-version = "0.1.23"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
-repository = "https://github.com/OunissiDhiaEddine/UC-SteamUI"
+repository = "https://github.com/OunissiDhiaEddine/Ultimate-Console"
 
 # Every crate takes shared dependencies from here (`foo.workspace = true`) so
 # parallel work packages stay on the same versions.

@@ -304,7 +304,7 @@ hotkey; the settings app shows how.
 
 ### 2.14 The menu inside Steam (Quick Access Menu tab, WP-12)
 
-Since 0.1.18 the agent's menu is an **Ultimate Console tab in Big
+Since 0.2.0 the agent's menu is an **Ultimate Console tab in Big
 Picture's Quick Access Menu** (Steam + A, also in Steam's in-game overlay)
 rather than the full-screen overlay of §2.9. The controller already works
 there, it looks like the rest of Big Picture, and nothing has to draw over
